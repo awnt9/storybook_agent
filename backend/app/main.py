@@ -1,18 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
+from app.api.router import api_router
 
 app = FastAPI(
     title="StoryBook Agent Backend",
     version="0.1.0",
 )
 
-@app.get("/")
-def healthcheck():
-    return {
-        "status": "ok",
-        "service": "StoryBook Agent Backend",
-    }
-
-@app.post("/initialize")
-def initialize_story():
+app.include_router(api_router)
     
