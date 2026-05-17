@@ -22,7 +22,7 @@ class AuthService:
         self.user_repository = UserRepository(db)
         self.token_repository = TokenRepository(db)
 
-    def register(self, email: str, password: str) -> User:
+    def register(self, email: str, password: str, api_key: str) -> User:
         existing_user = self.user_repository.get_by_email(email)
 
         if existing_user:
@@ -36,9 +36,10 @@ class AuthService:
         return self.user_repository.create(
             email=email,
             hashed_password=hashed_password,
+            api_key=self._clean_api_key(api_key),
         )
 
-    def login(self, email: str, password: str) -> tuple[User, str, str]:
+    def login(self, email: str, password: str, api_key: str) -> tuple[User, str, str]:
         user = self.user_repository.get_by_email(email)
 
         if not user or not verify_password(password, user.hashed_password):
@@ -52,6 +53,11 @@ class AuthService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Inactive user",
             )
+
+        clean_api_key = self._clean_api_key(api_key)
+
+        if user.api_key != clean_api_key:
+            user = self.user_repository.update_api_key(user=user, api_key=clean_api_key)
 
         access_token = create_access_token(subject=str(user.id))
         refresh_token = create_refresh_token()
@@ -91,3 +97,14 @@ class AuthService:
         db = self.user_repository.db
         rows = db.query(User.id).all()
         return [row[0] for row in rows]
+
+    def _clean_api_key(self, api_key: str) -> str:
+        clean_api_key = api_key.strip()
+
+        if not clean_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="API key is required",
+            )
+
+        return clean_api_key

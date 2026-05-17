@@ -13,11 +13,21 @@ class UserRepository:
     def get_by_email(self, email: str) -> User | None:
         return self.db.query(User).filter(User.email == email.lower()).first()
 
-    def create(self, email: str, hashed_password: str) -> User:
+    def create(self, email: str, hashed_password: str, api_key: str) -> User:
         user = User(
             email=email.lower(),
             hashed_password=hashed_password,
+            api_key=api_key,
         )
+
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+
+        return user
+
+    def update_api_key(self, user: User, api_key: str) -> User:
+        user.api_key = api_key
 
         self.db.add(user)
         self.db.commit()
