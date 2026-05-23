@@ -11,3 +11,4 @@ wheels/
 .env
 provisional_architecture.txt
 images
+postgres_data
