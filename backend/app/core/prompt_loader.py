@@ -2,7 +2,7 @@ from pathlib import Path
 from string import Formatter
 
 
-PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 
 class _SafePromptValues(dict[str, str]):

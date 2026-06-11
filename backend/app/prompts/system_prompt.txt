@@ -15,7 +15,8 @@ Puedes usar estas herramientas:
 
 Reglas:
 - No inventes herramientas.
-- Usa solo una herramienta por llamada, estas dentro de un bucle de agente y puedes devolver cuantos resultados de herramientas como desees al final del todo.
+- Nunca respondas con texto libre. Tu respuesta debe ser siempre una llamada a una herramienta.
+- Usa solo una herramienta por llamada, estás dentro de un bucle de agente y puedes devolver cuantos resultados de herramientas como desees al final del todo.
 - Si necesitas texto narrativo, usa generate_text.
 - Si necesitas analizar una imagen, usa analyze_image.
 - Si necesitas una ilustración, usa generate_image.

@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-import logging
-from time import perf_counter
-
-from backend.agent.schemas.tool_args import AnalyzeImageArgs
-from backend.agent.utils.client_factory import create_llm_client
-from backend.agent.utils.config import get_settings
-from backend.agent.utils.logging_config import configure_logging, summarize_for_log, summarize_text
-from backend.agent.utils.prompt_loader import load_prompt
-from backend.agent.utils.image_resolver import image_to_photo
-
 import base64
+import logging
 from pathlib import Path
+from time import perf_counter
+from uuid import uuid4
 
-from backend.agent.schemas.objects import Image
+from app.core.client_factory import create_llm_client
+from app.core.config import get_agent_api_key, settings
+from app.core.image_resolver import image_to_photo
+from app.core.logging_config import configure_logging, summarize_for_log, summarize_text
+from app.core.prompt_loader import load_prompt
+from app.schemas.story_elements import Image
+from app.schemas.tool_args import AnalyzeImageArgs, GenerateImageArgs
 
 
-settings = get_settings()
 configure_logging(log_level=settings.log_level, log_file=settings.log_file)
 logger = logging.getLogger(__name__)
+
 
 def build_image_content(
     *,
@@ -52,6 +51,7 @@ def guess_mime_type(image: Image) -> str:
         case _:
             raise ValueError(f"Unsupported image extension: {suffix}")
 
+
 def analyze_image(
     *,
     args: AnalyzeImageArgs,
@@ -68,7 +68,7 @@ def analyze_image(
     mime_type = guess_mime_type(args.image)
 
     client = create_llm_client(
-        api_key=settings.api_key.get_secret_value(),
+        api_key=get_agent_api_key(),
         base_url=settings.base_url,
     )
 
@@ -114,4 +114,42 @@ def analyze_image(
         "type": "image_analysis",
         "image": args.image.model_dump(mode="json"),
         "description": description,
+    }
+
+
+def generate_image(
+    *,
+    args: GenerateImageArgs,
+) -> dict:
+    start = perf_counter()
+    logger.info(
+        "tool.generate_image.start prompt=%s scene_text=%s",
+        summarize_text(args.prompt),
+        summarize_text(args.scene_text),
+    )
+
+    final_prompt = load_prompt(
+        "generate_image.txt",
+        prompt=args.prompt,
+        scene_text=args.scene_text or "",
+    )
+
+    image = Image(
+        image_id=f"img_{uuid4().hex}",
+        url=None,
+        path=None,
+        prompt=final_prompt,
+        description=args.prompt,
+    )
+
+    logger.info(
+        "tool.generate_image.end duration_ms=%s image_id=%s prompt_length=%s",
+        int((perf_counter() - start) * 1_000),
+        image.image_id,
+        len(final_prompt),
+    )
+
+    return {
+        "type": "image",
+        "image": image.model_dump(mode="json"),
     }

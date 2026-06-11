@@ -3,14 +3,13 @@ from __future__ import annotations
 import logging
 from time import perf_counter
 
-from backend.agent.schemas.tool_args import GenerateTextArgs
-from backend.agent.utils.client_factory import create_llm_client
-from backend.agent.utils.config import get_settings
-from backend.agent.utils.logging_config import configure_logging, summarize_text
-from backend.agent.utils.prompt_loader import load_prompt
+from app.core.client_factory import create_llm_client
+from app.core.config import get_agent_api_key, settings
+from app.core.logging_config import configure_logging, summarize_text
+from app.core.prompt_loader import load_prompt
+from app.schemas.tool_args import GenerateTextArgs
 
 
-settings = get_settings()
 configure_logging(log_level=settings.log_level, log_file=settings.log_file)
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ def generate_text(
     )
 
     client = create_llm_client(
-        api_key=settings.api_key.get_secret_value(),
+        api_key=get_agent_api_key(),
         base_url=settings.base_url,
     )
 
@@ -62,4 +61,3 @@ def generate_text(
         "type": "text",
         "content": content
     }
-    

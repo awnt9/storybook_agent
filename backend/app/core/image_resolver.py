@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from backend.agent.schemas.objects import Image
+from app.schemas.story_elements import Image
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-IMAGES_DIR = PROJECT_ROOT / "images"
+APP_DIR = Path(__file__).resolve().parents[1]
+IMAGES_DIR = APP_DIR / "images"
 
 
 def photo_to_image(photo_bytes: bytes, extension: str = "png") -> Image:

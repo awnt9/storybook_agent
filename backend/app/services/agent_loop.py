@@ -4,74 +4,24 @@ import json
 import logging
 from typing import Any
 
-from backend.agent.utils.config import get_settings
-from backend.agent.utils.client_factory import create_llm_client
-from backend.agent.utils.logging_config import configure_logging, summarize_for_log, summarize_text
-from backend.agent.utils.prompt_loader import load_prompt
-
-from backend.agent.schemas.objects import (
-    Scene, 
-    StoryState,
-    ToolCallRecord, 
-    UserAction, 
-    ToolHistory,
+from app.core.client_factory import create_llm_client
+from app.core.config import get_agent_api_key, settings
+from app.core.logging_config import configure_logging, summarize_for_log, summarize_text
+from app.core.prompt_loader import load_prompt
+from app.schemas.story_elements import (
     Image,
-    )
-
-from backend.agent.schemas.tool_args import (
-    GenerateTextArgs,
-    AnalyzeImageArgs,
-    GenerateImageArgs,
-    EndLoopArgs,
+    Scene,
+    StoryState,
+    ToolCallRecord,
+    ToolHistory,
+    UserAction,
 )
+from app.services.tool_service import AGENT_TOOLS, execute_tool
 
-from backend.agent.tools.generate_text import generate_text
-from backend.agent.tools.analyze_image import analyze_image
-from backend.agent.tools.generate_image import generate_image
-from backend.agent.tools.end_loop import end_loop 
 
-settings = get_settings()
 configure_logging(log_level=settings.log_level, log_file=settings.log_file)
 logger = logging.getLogger(__name__)
 
-AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_text",
-            "description": "Escribe un fragmento narrativo para el siguiente turno del cuento.",
-            "parameters": GenerateTextArgs.model_json_schema(),
-            "strict": False,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "analyze_image",
-            "description": "Analiza una imagen disponible en la historia o subida por el usuario.",
-            "parameters": AnalyzeImageArgs.model_json_schema(),
-            "strict": False,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_image",
-            "description": "Genera una imagen o ilustración basada en una descripción.",
-            "parameters": GenerateImageArgs.model_json_schema(),
-            "strict": False,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "end_loop",
-            "description": "Finaliza el bucle del agente cuando ya hay suficiente material.",
-            "parameters": EndLoopArgs.model_json_schema(),
-            "strict": False,
-        },
-    },
-]
 
 def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
     iteration = 0
@@ -86,7 +36,7 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
 
     try:
         client = create_llm_client(
-            api_key=settings.api_key.get_secret_value(),
+            api_key=get_agent_api_key(),
             base_url=settings.base_url,
         )
 
@@ -95,6 +45,7 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
 
         while True:
             iteration += 1
+            selected_tool_name = None
             logger.info(
                 "agent_loop.iteration.start iteration=%s history_calls=%s scene_texts=%s scene_images=%s",
                 iteration,
@@ -106,7 +57,7 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
             messages: list[dict[str, Any]] = [
                 {
                     "role": "system",
-                    "content": load_prompt("run_agent_loop.txt"),
+                    "content": load_prompt("system_prompt.txt"),
                 },
                 {
                     "role": "user",
@@ -126,19 +77,39 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
                 model=settings.model_name,
                 messages=messages,
                 tools=AGENT_TOOLS,
-                tool_choice="auto",
+                tool_choice="required",
                 parallel_tool_calls=False,
             )
 
             assistant_message = response.choices[0].message
             tool_calls = assistant_message.tool_calls
 
-            if not tool_calls:
-                raise RuntimeError("Agent did not return a tool call.")
+            if tool_calls:
+                tool_call = tool_calls[0]
+                selected_tool_name = tool_call.function.name
+                arguments = json.loads(tool_call.function.arguments)
+            else:
+                parsed_tool_call = _extract_tool_call_from_content(
+                    getattr(assistant_message, "content", None)
+                )
 
-            tool_call = tool_calls[0]
-            selected_tool_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
+                if parsed_tool_call is not None:
+                    selected_tool_name, arguments = parsed_tool_call
+                    logger.warning(
+                        "agent_loop.content_tool_call_parsed iteration=%s tool=%s",
+                        iteration,
+                        selected_tool_name,
+                    )
+                else:
+                    logger.warning(
+                        "agent_loop.no_tool_call iteration=%s content=%s",
+                        iteration,
+                        summarize_text(getattr(assistant_message, "content", None)),
+                    )
+                    raise RuntimeError("Agent did not return a tool call.")
+
+            if not selected_tool_name:
+                raise RuntimeError("Agent did not return a tool call.")
 
             logger.info(
                 "tool.selected iteration=%s tool=%s arguments=%s",
@@ -152,7 +123,7 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
 
             logger.info("tool.execution.start iteration=%s tool=%s", iteration, selected_tool_name)
             try:
-                output_payload = _execute_tool(tool_name=selected_tool_name, arguments=arguments)
+                output_payload = execute_tool(tool_name=selected_tool_name, arguments=arguments)
             except Exception:
                 logger.exception(
                     "tool.execution.error iteration=%s tool=%s arguments=%s",
@@ -201,6 +172,21 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
                 )
                 break
 
+            if iteration >= settings.agent_max_iterations:
+                if _scene_has_material(working_scene):
+                    logger.warning(
+                        "agent_loop.max_iterations_finish iteration=%s max_iterations=%s scene_texts=%s scene_images=%s",
+                        iteration,
+                        settings.agent_max_iterations,
+                        _count_items(working_scene.texts),
+                        _count_items(working_scene.images),
+                    )
+                    break
+
+                raise RuntimeError(
+                    f"Agent reached max iterations ({settings.agent_max_iterations}) without generated material."
+                )
+
         logger.info(
             "agent_loop.end story_id=%s iterations=%s scene_texts=%s scene_images=%s",
             state.story_id,
@@ -218,37 +204,6 @@ def run_agent_loop(state: StoryState, action: UserAction) -> Scene:
         )
         raise
 
-def _execute_tool(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> dict[str, Any]:
-    match tool_name:
-        case "generate_text":
-            args = GenerateTextArgs.model_validate(arguments)
-            return generate_text(
-                args=args,
-            )
-
-        case "analyze_image":
-            args = AnalyzeImageArgs.model_validate(arguments)
-            return analyze_image(
-                args=args,
-            )
-
-        case "generate_image":
-            args = GenerateImageArgs.model_validate(arguments)
-            return generate_image(
-                args=args,
-            )
-
-        case "end_loop":
-            args = EndLoopArgs.model_validate(arguments)
-            return end_loop(args=args)
-
-        case _:
-            raise ValueError(f"Unknown tool: {tool_name}")
-
 
 def _count_items(value: Any) -> int:
     if value is None:
@@ -259,43 +214,46 @@ def _count_items(value: Any) -> int:
     return 1
 
 
+def _scene_has_material(scene: Scene) -> bool:
+    return _count_items(scene.texts) > 0 or _count_items(scene.images) > 0
+
+
+def _extract_tool_call_from_content(content: str | None) -> tuple[str, dict[str, Any]] | None:
+    if not content:
+        return None
+
+    payload = content.strip()
+
+    if payload.startswith("<tool_call>"):
+        start = len("<tool_call>")
+        end = payload.find("</tool_call>", start)
+        payload = payload[start:end if end != -1 else None].strip()
+
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    tool_name = parsed.get("name") or parsed.get("tool_name")
+    arguments = parsed.get("arguments") or parsed.get("args") or {}
+
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+
+    if not isinstance(tool_name, str) or not isinstance(arguments, dict):
+        return None
+
+    return tool_name, arguments
+
+
 def _summarize_user_action(action: UserAction) -> Any:
     return summarize_for_log(
         action.model_dump(mode="json"),
         include_payloads=settings.log_llm_payloads,
     )
-
-if __name__ == "__main__":
-    initial_image = Image(
-        image_id="img_test_001",
-        path="C:\\Users\\antonio\\Desktop\\Master\\modulo10\\tasks\\challenge_task\\images\\img_test_001.png",
-        url=None,
-        prompt=None,
-        description=None,
-    )
-
-    initial_scene = Scene(
-        images=[
-            initial_image,
-        ],
-    )
-
-    state = StoryState(
-        story_id="story_test_001",
-        current_scene=initial_scene,
-        history=[
-            initial_scene,
-        ],
-    )
-
-    action = UserAction(
-        user_action="Continúa el cuento. Nilo debe encontrar un objeto mágico y aprender una pequeña lección."
-    )
-
-    result_scene = run_agent_loop(
-        state=state,
-        action=action,
-    )
-
-    print("\n=== RESULT SCENE ===")
-    print(result_scene.model_dump_json(indent=2))

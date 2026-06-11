@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
-from backend.agent.schemas.objects import Image
+
+from app.schemas.story_elements import Image
 
 
 class GenerateTextArgs(BaseModel):
@@ -22,6 +23,10 @@ class AnalyzeImageArgs(BaseModel):
     image: Image | None = Field(
         default=None,
         description="Imagen a analizar, con al menos uno de los siguientes campos: image_id, path o url.",
+    )
+    question: str = Field(
+        default="Describe la imagen para continuar el cuento.",
+        description="Pregunta o instrucción concreta para analizar la imagen.",
     )
 
 
