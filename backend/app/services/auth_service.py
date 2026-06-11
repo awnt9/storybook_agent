@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -12,6 +11,7 @@ from app.core.security import (
     verify_password,
     verify_refresh_token,
 )
+from app.core.config import settings
 from app.models.user import User
 from app.repositories.token_repository import TokenRepository
 from app.repositories.user_repository import UserRepository
