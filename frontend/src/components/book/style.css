@@ -1,0 +1,182 @@
+.story-book-stage {
+  width: 100%;
+  min-height: clamp(24rem, 48vw, 40rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2rem;
+  overflow: hidden;
+  padding: 2rem 0 0;
+  background: transparent;
+  line-height: 1.5em;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+.story-book-stage *,
+.story-book-stage *:before,
+.story-book-stage *:after {
+  box-sizing: border-box;
+}
+
+.story-book-stage .book {
+  transition: opacity 0.4s 0.2s;
+}
+.story-book-stage .page {
+  width: 36vw;
+  height: 27vw;
+  background-color: #fff;
+  float: left;
+  margin-bottom: 0.5em;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  text-align: center;
+}
+.story-book-stage .page:first-child {
+  float: right;
+}
+.story-book-stage .page:nth-child(even) {
+  clear: both;
+}
+.story-book-stage .bound {
+  perspective: 250vw;
+}
+.story-book-stage .bound .pages {
+  width: 72vw;
+  height: 27vw;
+  position: relative;
+  transform: rotateX(12deg);
+  transform-style: preserve-3d;
+  -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px #e3dfd8;
+}
+.story-book-stage .bound .page {
+  float: none;
+  clear: none;
+  margin: 0;
+  position: absolute;
+  top: 0;
+  width: 36vw;
+  height: 27vw;
+  transform-origin: 0 0;
+  transition: transform 1.4s;
+  -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+  transform-style: preserve-3d;
+  pointer-events: none;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+      -ms-user-select: none;
+          user-select: none;
+}
+.story-book-stage .bound .page:before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.7s;
+  z-index: 2;
+}
+.story-book-stage .bound .page:nth-child(odd) {
+  transform: rotateY(0deg);
+  right: 0;
+  border-radius: 0 4px 4px 0;
+}
+.story-book-stage .bound .page:nth-child(odd):before {
+  background: rgba(0, 0, 0, 0);
+}
+.story-book-stage .bound .page:nth-child(even) {
+  transform: rotateY(180deg);
+  transform-origin: 100% 0;
+  left: 0;
+  border-radius: 4px 0 0 4px;
+}
+.story-book-stage .bound .page:nth-child(even):before {
+  background: rgba(0, 0, 0, 0.2);
+}
+.story-book-stage .bound .page.grabbing {
+  transition: none;
+}
+.story-book-stage .bound .page.flipped:nth-child(odd) {
+  transform: rotateY(-180deg);
+}
+.story-book-stage .bound .page.flipped:nth-child(odd):before {
+  background: rgba(0, 0, 0, 0.2);
+}
+.story-book-stage .bound .page.flipped:nth-child(even) {
+  transform: rotateY(0deg);
+}
+.story-book-stage .bound .page.flipped:nth-child(even):before {
+  background: rgba(0, 0, 0, 0);
+}
+
+.story-book-stage .bound .page.preview-next:nth-child(odd) {
+  transform: rotateY(-10deg);
+}
+
+.story-book-stage .bound .page.preview-next:nth-child(odd):before,
+.story-book-stage .bound .page.preview-previous:nth-child(even):before {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.story-book-stage .bound .page.preview-previous.flipped:nth-child(even) {
+  transform: rotateY(10deg);
+}
+
+.story-book-stage .book-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.story-book-stage .book-control {
+  width: 3.25rem;
+  height: 3.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid #111827;
+  border-radius: 999px;
+  background: #fff9e8;
+  color: #111827;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 #111827;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.story-book-stage .book-control:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 #111827;
+}
+
+.story-book-stage .book-control:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #111827;
+}
+
+.story-book-stage .book-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.story-book-stage .book-control svg {
+  width: 1.75rem;
+  height: 1.75rem;
+  stroke-width: 3;
+}
+.story-book-stage .page {
+  color: transparent;
+  background: left top no-repeat;
+  background-size: cover;
+}
+
