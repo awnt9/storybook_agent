@@ -6,7 +6,7 @@
   align-items: center;
   justify-content: flex-start;
   gap: 2rem;
-  overflow: hidden;
+  overflow: visible;
   padding: 2rem 0 0;
   background: transparent;
   line-height: 1.5em;
@@ -20,11 +20,17 @@
 }
 
 .story-book-stage .book {
+  --book-width: 72vw;
+  --book-page-height: calc(var(--book-width) * 768 / 2047);
+
+  position: relative;
+  width: var(--book-width);
+  min-height: var(--book-page-height);
   transition: opacity 0.4s 0.2s;
 }
+
 .story-book-stage .page {
-  width: 36vw;
-  height: 27vw;
+  width: 50%;
   background-color: #fff;
   float: left;
   margin-bottom: 0.5em;
@@ -43,24 +49,25 @@
   perspective: 250vw;
 }
 .story-book-stage .bound .pages {
-  width: 72vw;
-  height: 27vw;
+  width: 100%;
+  height: var(--book-page-height);
   position: relative;
+  z-index: 1;
   transform: rotateX(12deg);
   transform-style: preserve-3d;
   -webkit-backface-visibility: hidden;
           backface-visibility: hidden;
   border-radius: 4px;
-  box-shadow: 0 0 0 1px #e3dfd8;
 }
+
 .story-book-stage .bound .page {
   float: none;
   clear: none;
   margin: 0;
   position: absolute;
   top: 0;
-  width: 36vw;
-  height: 27vw;
+  width: 50%;
+  height: 100%;
   transform-origin: 0 0;
   transition: transform 1.4s;
   -webkit-backface-visibility: hidden;
@@ -72,6 +79,7 @@
       -ms-user-select: none;
           user-select: none;
 }
+
 .story-book-stage .bound .page:before {
   content: '';
   position: absolute;
@@ -83,6 +91,50 @@
   transition: background 0.7s;
   z-index: 2;
 }
+.story-book-stage .book-cover {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.story-book-stage .book-cover img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+}
+
+.story-book-stage .book-page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.story-book-stage .book-page img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+  transform: scale(1.025);
+  transform-origin: center;
+}
+
+.story-book-stage .book-page-content {
+  position: absolute;
+  inset: 12% 14%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #111827;
+  font-size: clamp(1rem, 1.45vw, 1.5rem);
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+
 .story-book-stage .bound .page:nth-child(odd) {
   transform: rotateY(0deg);
   right: 0;
@@ -176,7 +228,7 @@
 }
 .story-book-stage .page {
   color: transparent;
-  background: left top no-repeat;
-  background-size: cover;
+  background: center no-repeat;
+  background-size: contain;
 }
 

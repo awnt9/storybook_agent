@@ -1,112 +1,39 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
+import backCoverImage from "../../assets/book/back_cover.png";
+import coverImage from "../../assets/book/cover.png";
+import leftPageImage from "../../assets/book/left_page.png";
+import rightPageImage from "../../assets/book/right_page.png";
 import "./style.css";
 
-const pages = [
-  (
-    <>
-      <h1>Boyhood</h1>
-      <h2>by Jason Hibbs</h2>
-    </>
-  ),
-  null,
-  null,
-  null,
-  null,
-  null,
-  (
-    <>
-      There was a boy
-      <br />
-      Who had it rough
-    </>
-  ),
-  (
-    <>
-      His adventure
-      <br />
-      Was to be tough
-    </>
-  ),
-  null,
-  null,
-  (
-    <>
-      He knew his Mother
-      <br />
-      Had left this land
-    </>
-  ),
-  (
-    <>
-      He knew his Father
-      <br />
-      Like the back of his hand
-    </>
-  ),
-  null,
-  (
-    <>
-      There were monsters
-      <br />
-      He had to fight
-    </>
-  ),
-  null,
-  null,
-  (
-    <>
-      He sometimes hid
-      <br />
-      He never cried
-    </>
-  ),
-  (
-    <>
-      There was a boy
-      <br />
-      Who was afraid
-    </>
-  ),
-  (
-    <>
-      Who wore armour
-      <br />
-      That he had made
-    </>
-  ),
-  null,
-  (
-    <>
-      There was a boy
-      <br />
-      Who met a girl
-    </>
-  ),
-  null,
-  (
-    <>
-      He met a girl
-      <br />
-      Who changed his world
-    </>
-  ),
-  null,
-  (
-    <>
-      Who saw the armour
-      <br />
-      And looked inside
-    </>
-  ),
-  "And inside...",
-  null,
-  "There was a boy.",
-  null,
-  null,
-  null,
-  null,
-];
+function BookCover() {
+  return (
+    <div className="book-cover">
+      <img alt="Portada del cuento" src={coverImage} />
+    </div>
+  );
+}
+
+function BookBackCover() {
+  return (
+    <div className="book-cover">
+      <img alt="Contraportada del cuento" src={backCoverImage} />
+    </div>
+  );
+}
+
+function BookPage({ children, side }) {
+  const pageImage = side === "left" ? leftPageImage : rightPageImage;
+
+  return (
+    <div className="book-page">
+      <img alt="" aria-hidden="true" src={pageImage} />
+      {children ? <div className="book-page-content">{children}</div> : null}
+    </div>
+  );
+}
+
+const pages = Array.from({ length: 8 }, () => null);
 
 export function StoryBookPreview() {
   const leafCount = Math.ceil(pages.length / 2);
@@ -153,7 +80,13 @@ export function StoryBookPreview() {
               key={index}
               style={{ zIndex: zIndexes[index] }}
             >
-              {content}
+              {index === 0 ? (
+                <BookCover />
+              ) : index === pages.length - 1 ? (
+                <BookBackCover />
+              ) : (
+                <BookPage side={index % 2 === 0 ? "right" : "left"}>{content}</BookPage>
+              )}
             </div>
           ))}
         </div>
