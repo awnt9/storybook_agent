@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Cookie, Depends, Response, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.database import get_db

@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
-from app.models.refresh_token import RefreshToken
+from app.schemas.user import RefreshToken
 
 
 class TokenRepository:
@@ -28,29 +28,28 @@ class TokenRepository:
         return token
 
     def list_valid_by_user(self, user_id: int) -> list[RefreshToken]:
-        return (
-            self.db.query(RefreshToken)
-            .filter(
-                RefreshToken.user_id == user_id,
-                RefreshToken.revoked_at.is_(None),
-                RefreshToken.expires_at > datetime.utcnow(),
-            )
-            .all()
+        return list(
+            self.db.exec(
+                select(RefreshToken).where(
+                    RefreshToken.user_id == user_id,
+                    RefreshToken.revoked_at.is_(None),
+                    RefreshToken.expires_at > datetime.utcnow(),
+                )
+            ).all()
         )
 
     def revoke(self, token: RefreshToken) -> None:
         token.revoked_at = datetime.utcnow()
+        self.db.add(token)
         self.db.commit()
 
     def revoke_all_for_user(self, user_id: int) -> None:
-        tokens = (
-            self.db.query(RefreshToken)
-            .filter(
+        tokens = self.db.exec(
+            select(RefreshToken).where(
                 RefreshToken.user_id == user_id,
                 RefreshToken.revoked_at.is_(None),
             )
-            .all()
-        )
+        ).all()
 
         for token in tokens:
             token.revoked_at = datetime.utcnow()

@@ -1,6 +1,6 @@
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
-from app.models.user import User
+from app.schemas.user import User
 
 
 class UserRepository:
@@ -8,10 +8,13 @@ class UserRepository:
         self.db = db
 
     def get_by_id(self, user_id: int) -> User | None:
-        return self.db.query(User).filter(User.id == user_id).first()
+        return self.db.exec(select(User).where(User.id == user_id)).first()
 
     def get_by_email(self, email: str) -> User | None:
-        return self.db.query(User).filter(User.email == email.lower()).first()
+        return self.db.exec(select(User).where(User.email == email.lower())).first()
+
+    def list_ids(self) -> list[int]:
+        return list(self.db.exec(select(User.id)).all())
 
     def create(self, email: str, hashed_password: str, api_key: str) -> User:
         user = User(

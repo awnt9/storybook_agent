@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session
 
 from app.core.security import (
     create_access_token,
@@ -12,9 +12,9 @@ from app.core.security import (
     verify_refresh_token,
 )
 from app.core.config import settings
-from app.models.user import User
 from app.repositories.token_repository import TokenRepository
 from app.repositories.user_repository import UserRepository
+from app.schemas.user import User
 
 
 class AuthService:
@@ -89,9 +89,7 @@ class AuthService:
         self.token_repository.revoke_all_for_user(user_id)
 
     def _get_candidate_user_ids(self) -> list[int]:
-        db = self.user_repository.db
-        rows = db.query(User.id).all()
-        return [row[0] for row in rows]
+        return self.user_repository.list_ids()
 
     def _clean_api_key(self, api_key: str) -> str:
         clean_api_key = api_key.strip()
