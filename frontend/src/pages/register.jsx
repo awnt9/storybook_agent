@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useNavigate } from "react-router-dom";
-import { KeyRound, Loader2, Lock, Mail, Sparkles, UserPlus } from "lucide-react";
+import { Loader2, Lock, Mail, Sparkles, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 const fadeInUp = {
@@ -14,7 +14,6 @@ export default function Register() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (event) => {
@@ -27,7 +26,7 @@ export default function Register() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password, api_key: apiKey.trim() }),
+        body: JSON.stringify({ email, password }),
       });
 
       if (!response.ok) {
@@ -160,32 +159,10 @@ export default function Register() {
             </div>
           </motion.label>
 
-          <motion.label
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, delay: 0.68 }}
-            className="mt-5 block"
-          >
-            <span className="text-sm font-black uppercase tracking-wide text-slate-700">API key de OpenAI</span>
-            <div className="mt-2 flex items-center gap-3 rounded-2xl border-4 border-slate-900 bg-yellow-100 px-4 py-3">
-              <KeyRound className="h-5 w-5 shrink-0" />
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                className="w-full bg-transparent font-bold outline-none placeholder:text-slate-500"
-                placeholder="sk-..."
-                autoComplete="off"
-                spellCheck="false"
-                required
-              />
-            </div>
-          </motion.label>
-
           <motion.button
             initial={{ opacity: 0, y: 18, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.45, delay: 0.82 }}
+            transition={{ duration: 0.45, delay: 0.68 }}
             whileHover={{ y: -4 }}
             whileTap={{ y: 0, scale: 0.98 }}
             type="submit"

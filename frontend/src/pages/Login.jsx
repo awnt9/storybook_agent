@@ -126,8 +126,8 @@ export default function Login() {
           >
             <ShieldCheck className="mt-1 h-6 w-6 shrink-0" />
             <p className="text-slate-700">
-              El agente usa modelos de IA que consumen tokens. Por eso cada usuario registra su propia API key:
-              asi cada historia se genera con los creditos de su cuenta y no con una clave compartida.
+              El agente usa modelos de IA que consumen tokens. Cada usuario podra configurar sus credenciales
+              por separado para generar historias con los creditos de su cuenta y no con una clave compartida.
             </p>
           </motion.div>
         </section>
