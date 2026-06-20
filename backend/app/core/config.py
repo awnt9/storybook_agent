@@ -19,8 +19,6 @@ class Settings(BaseSettings):
 
     database_url: str
 
-    cors_origins: str
-
     jwt_secret_key: str
     jwt_algorithm: str
     access_token_expire_minutes: int = 15
