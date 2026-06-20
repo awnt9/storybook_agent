@@ -16,11 +16,10 @@ class UserRepository:
     def list_ids(self) -> list[int]:
         return list(self.db.exec(select(User.id)).all())
 
-    def create(self, email: str, hashed_password: str, api_key: str) -> User:
+    def create(self, email: str, hashed_password: str) -> User:
         user = User(
             email=email.lower(),
             hashed_password=hashed_password,
-            api_key=api_key,
         )
 
         self.db.add(user)

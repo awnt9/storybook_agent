@@ -10,7 +10,7 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True, index=True)
     email: str = Field(max_length=255, unique=True, index=True, nullable=False)
     hashed_password: str = Field(max_length=255, nullable=False)
-    api_key: str = Field(max_length=512, nullable=False)
+    api_key: str | None = Field(default=None, max_length=512, nullable=True)
     is_active: bool = Field(default=True, nullable=False)
     is_verified: bool = Field(default=False, nullable=False)
     created_at: datetime = Field(

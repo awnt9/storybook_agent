@@ -20,7 +20,6 @@ def register(
     return AuthService(db).register(
         email=payload.email,
         password=payload.password,
-        api_key=payload.api_key,
     )
 
 
