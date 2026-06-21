@@ -134,7 +134,8 @@ export default function ProfileModal({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="profile-title" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border-4 border-slate-900 bg-[#fff5cf] p-5 shadow-[12px_12px_0_#111827] md:p-7">
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-[2rem] border-4 border-slate-900 bg-[#fff5cf] p-2 shadow-[12px_12px_0_#111827] md:p-3">
+        <div className="max-h-[calc(92vh-2rem)] overflow-y-auto p-3 pr-4 md:p-4 md:pr-5">
         <div className="flex items-start justify-between gap-4">
           <div><h2 id="profile-title" className="text-3xl font-black">Mis API keys</h2><p className="mt-1 font-semibold text-slate-600">{user?.email}</p></div>
           <button type="button" onClick={onClose} className="rounded-xl border-3 border-slate-900 bg-white p-2 shadow-[3px_3px_0_#111827]" aria-label="Cerrar perfil"><X className="h-5 w-5" /></button>
@@ -176,6 +177,7 @@ export default function ProfileModal({ isOpen, onClose }) {
             );
           })}
         </section>
+        </div>
       </div>
     </div>
   );
