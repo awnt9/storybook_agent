@@ -92,6 +92,7 @@
   z-index: 2;
 }
 .story-book-stage .book-cover {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: visible;
@@ -104,6 +105,148 @@
   height: 100%;
   display: block;
   object-fit: fill;
+}
+
+.story-book-stage .book-cover-editor {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 10;
+  width: 50%;
+  height: 100%;
+  transform: rotateY(0deg);
+  transform-origin: 0 0;
+  transform-style: preserve-3d;
+  -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+  pointer-events: auto;
+  color: #111827;
+  transition: transform 1.4s;
+  -webkit-user-select: auto;
+          user-select: auto;
+}
+
+.story-book-stage .book-cover-editor-hidden {
+  transform: rotateY(-180deg);
+  pointer-events: none;
+}
+
+.story-book-stage .book-cover-editor-preview {
+  transform: rotateY(-10deg);
+}
+
+.story-book-stage .cover-photo-input {
+  position: absolute;
+  top: 20.8%;
+  left: 28.35%;
+  width: 51.5%;
+  height: 31.2%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: clamp(2px, 0.24vw, 4px) dashed rgba(107, 39, 51, 0.62);
+  border-radius: 1vw;
+  background: rgba(255, 255, 255, 0.2);
+  color: #6b2733;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.story-book-stage .cover-photo-input:hover,
+.story-book-stage .cover-photo-input:focus-within {
+  border-color: #6b2733;
+  background: rgba(255, 255, 255, 0.46);
+  box-shadow: 0 0.35rem 0.8rem rgba(72, 19, 31, 0.16);
+}
+
+.story-book-stage .cover-photo-input-dragging {
+  border-color: #111827;
+  background: rgba(190, 242, 100, 0.42);
+  box-shadow: 0 0 0 clamp(2px, 0.18vw, 3px) rgba(17, 24, 39, 0.2);
+}
+
+.story-book-stage .cover-photo-input,
+.story-book-stage .cover-photo-input * {
+  cursor: pointer;
+}
+
+.story-book-stage .cover-photo-input input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.story-book-stage .cover-photo-input > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: none;
+}
+
+.story-book-stage .cover-photo-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.1rem, 0.28vw, 0.28rem);
+  padding: clamp(0.25rem, 0.55vw, 0.55rem);
+  font-size: clamp(0.65rem, 1.15vw, 1.15rem);
+  line-height: 1.1;
+}
+
+.story-book-stage .cover-photo-placeholder svg {
+  width: clamp(1.1rem, 2.2vw, 2.25rem);
+  height: clamp(1.1rem, 2.2vw, 2.25rem);
+  stroke-width: 2.5;
+  transition: transform 0.18s ease;
+}
+
+.story-book-stage .cover-photo-input:hover .cover-photo-placeholder svg,
+.story-book-stage .cover-photo-input-dragging .cover-photo-placeholder svg {
+  transform: translateY(-0.12em) scale(1.08);
+}
+
+.story-book-stage .cover-photo-placeholder small {
+  font-size: 0.7em;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.story-book-stage .cover-text-input {
+  position: absolute;
+  z-index: 4;
+  border: 0;
+  background: transparent;
+  color: #fff7ed;
+  font-family: inherit;
+  font-weight: 900;
+  text-align: center;
+  outline: none;
+  pointer-events: auto;
+  cursor: text;
+  -webkit-user-select: text;
+          user-select: text;
+}
+
+.story-book-stage .cover-text-input::placeholder {
+  color: rgba(255, 247, 237, 0.72);
+}
+
+.story-book-stage .cover-story-title-input {
+  top: 55.5%;
+  left: 34.5%;
+  width: 38.7%;
+  height: 22%;
+  padding: 0;
+  overflow: hidden;
+  resize: none;
+  font-size: clamp(0.65rem, 1.4vw, 1.4rem);
+  line-height: 3.25vw;
 }
 
 .story-book-stage .book-page {
