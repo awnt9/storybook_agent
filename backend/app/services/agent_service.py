@@ -1,384 +1,185 @@
 from __future__ import annotations
 
-import base64
 import json
-import logging
-import os
-from dataclasses import dataclass, field
-from functools import lru_cache
-from pathlib import Path
-from time import perf_counter
-from typing import Any
-from uuid import uuid4
+from collections.abc import AsyncIterator
+from dataclasses import asdict, is_dataclass
 
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel
+from pydantic_graph import EndMarker, GraphBuilder, StepContext
+from pydantic_graph.graph_builder import GraphTask
+from sqlmodel import Session
 
-from app.core.client_factory import create_llm_client
-from app.core.config import get_agent_api_key, settings
-from app.core.image_resolver import image_to_photo
-from app.core.logging_config import configure_logging, summarize_for_log, summarize_text
-from app.core.prompt_loader import load_prompt
-from app.schemas.story_elements import Image, Scene, StoryState, UserAction
-
-
-configure_logging(log_level=settings.log_level, log_file=settings.log_file)
-logger = logging.getLogger(__name__)
+from app.core.agents.agents import bg_generator
+from app.core.config import settings
+from app.core.openai_client import create_llm_client
+from app.repositories.agent_repository import AgentRepository
+from app.schemas.story_elements import (
+    Image,
+    ImageDeps,
+    Scene,
+    StoryAgentDeps,
+)
 
 
-@dataclass
-class StoryAgentDeps:
-    state: StoryState
-    action: UserAction
-    scene: Scene = field(default_factory=Scene)
+g = GraphBuilder(input_type=StoryAgentDeps, output_type=Scene)
 
 
-class TurnComplete(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+@g.step
+async def create_background_image(ctx: StepContext[None, None, StoryAgentDeps]) -> Image:
+    prompt = ctx.inputs.action.text
+    if not prompt:
+        raise ValueError("Background generation requires a text prompt")
 
-    reason: str = Field(
-        default="Ya hay suficiente material para construir el siguiente turno del cuento.",
-        description="Motivo por el que el agente considera completo este turno.",
+    result = await bg_generator.run(
+        prompt,
+        deps=ImageDeps(
+            openai_client=ctx.inputs.openai_client,
+            image_model=settings.bg_image_model,
+            image_size=settings.bg_image_size,
+        ),
     )
 
-
-def _configure_provider_environment(*, require_api_key: bool = False) -> None:
-    if settings.agent_api_key and "OPENAI_API_KEY" not in os.environ:
-        os.environ["OPENAI_API_KEY"] = settings.agent_api_key
-
-    if settings.base_url and "OPENAI_BASE_URL" not in os.environ:
-        os.environ["OPENAI_BASE_URL"] = settings.base_url
-
-    if require_api_key and "OPENAI_API_KEY" not in os.environ:
-        os.environ["OPENAI_API_KEY"] = get_agent_api_key()
-
-
-def _agent_model() -> str:
-    if ":" in settings.agent_model:
-        return settings.agent_model
-
-    return f"openai-chat:{settings.agent_model}"
-
-
-@lru_cache
-def get_story_agent() -> Agent:
-    _configure_provider_environment(require_api_key=True)
-
-    agent = Agent(
-        _agent_model(),
-        deps_type=StoryAgentDeps,
-        output_type=TurnComplete,
-        instructions=load_prompt("story_agent.txt"),
-    )
-
-    @agent.instructions
-    def add_story_context(ctx: RunContext[StoryAgentDeps]) -> str:
-        return json.dumps(
-            {
-                "state": ctx.deps.state.model_dump(mode="json"),
-                "user_action": ctx.deps.action.model_dump(mode="json"),
-                "generated_scene_so_far": ctx.deps.scene.model_dump(mode="json"),
-            },
-            ensure_ascii=False,
-        )
-
-    @agent.tool
-    def generate_text(
-        ctx: RunContext[StoryAgentDeps],
-        brief: str,
-        tone: str = "infantil, cálido y claro",
-    ) -> str:
-        """Escribe un fragmento narrativo para el siguiente turno del cuento."""
-        content = _generate_text(brief=brief, tone=tone)
-        _append_text(ctx.deps.scene, content)
-        return content
-
-    @agent.tool
-    def analyze_image(
-        ctx: RunContext[StoryAgentDeps],
-        image: Image | None = None,
-        question: str = "Describe la imagen para continuar el cuento.",
-    ) -> str:
-        """Analiza una imagen disponible en la historia o subida por el usuario."""
-        selected_image = image or _image_from_action(ctx.deps.action)
-
-        if selected_image is None:
-            raise ValueError("No image was provided and the user action does not contain an image.")
-
-        return _analyze_image(image=selected_image, question=question)
-
-    @agent.tool
-    def generate_image(
-        ctx: RunContext[StoryAgentDeps],
-        prompt: str,
-        scene_text: str | None = None,
-    ) -> Image:
-        """Prepara una ilustración infantil basada en una descripcion visual."""
-        image = _generate_image(prompt=prompt, scene_text=scene_text)
-        _append_image(ctx.deps.scene, image)
-        return image
-
-    return agent
-
-
-async def run_story_turn(state: StoryState, action: UserAction) -> Scene:
-    deps = StoryAgentDeps(state=state, action=action)
-    start = perf_counter()
-
-    logger.info(
-        "agent_service.start story_id=%s model=%s action=%s",
-        state.story_id,
-        _agent_model(),
-        summarize_for_log(action, include_payloads=settings.log_llm_payloads),
-    )
-
-    result = await get_story_agent().run(
-        "Prepara el siguiente turno de la historia.",
-        deps=deps,
-    )
-
-    _ensure_scene_has_material(deps.scene)
-
-    logger.info(
-        "agent_service.end story_id=%s duration_ms=%s reason=%s scene_texts=%s scene_images=%s",
-        state.story_id,
-        int((perf_counter() - start) * 1_000),
-        summarize_text(result.output.reason),
-        _count_items(deps.scene.texts),
-        _count_items(deps.scene.images),
-    )
-
-    return deps.scene
-
-
-def run_story_turn_sync(state: StoryState, action: UserAction) -> Scene:
-    deps = StoryAgentDeps(state=state, action=action)
-    start = perf_counter()
-
-    logger.info(
-        "agent_service.start story_id=%s model=%s action=%s",
-        state.story_id,
-        _agent_model(),
-        summarize_for_log(action, include_payloads=settings.log_llm_payloads),
-    )
-
-    result = get_story_agent().run_sync(
-        "Prepara el siguiente turno de la historia.",
-        deps=deps,
-    )
-
-    _ensure_scene_has_material(deps.scene)
-
-    logger.info(
-        "agent_service.end story_id=%s duration_ms=%s reason=%s scene_texts=%s scene_images=%s",
-        state.story_id,
-        int((perf_counter() - start) * 1_000),
-        summarize_text(result.output.reason),
-        _count_items(deps.scene.texts),
-        _count_items(deps.scene.images),
-    )
-
-    return deps.scene
-
-
-def _generate_text(*, brief: str, tone: str) -> str:
-    start = perf_counter()
-    logger.info(
-        "tool.generate_text.start brief=%s tone=%s",
-        summarize_text(brief),
-        summarize_text(tone),
-    )
-
-    prompt = load_prompt(
-        "generate_text.txt",
-        brief=brief,
-        tone=tone,
-    )
-
-    response = _llm_client().chat.completions.create(
-        model=settings.model_name,
-        messages=[
-            {
-                "role": "system",
-                "content": prompt,
-            },
-            {
-                "role": "user",
-                "content": "Escribe el siguiente fragmento del cuento.",
-            },
-        ],
-    )
-
-    content = response.choices[0].message.content
-
-    if not content:
-        raise RuntimeError("generate_text returned empty content.")
-
-    logger.info(
-        "tool.generate_text.end duration_ms=%s content_length=%s",
-        int((perf_counter() - start) * 1_000),
-        len(content),
-    )
-
-    return content
-
-
-def _analyze_image(*, image: Image, question: str) -> str:
-    start = perf_counter()
-    logger.info(
-        "tool.analyze_image.start image=%s question=%s",
-        summarize_for_log(image, include_payloads=settings.log_llm_payloads),
-        summarize_text(question),
-    )
-
-    image_bytes = image_to_photo(image=image)
-    image_content = _build_image_content(image=image, image_bytes=image_bytes)
-    mime_type = _guess_mime_type(image)
-    prompt = load_prompt(
-        "analyze_image.txt",
-        question=question,
-    )
-
-    response = _llm_client().chat.completions.create(
-        model=settings.model_name,
-        messages=[
-            {
-                "role": "system",
-                "content": prompt,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": question,
-                    },
-                    image_content,
-                ],
-            },
-        ],
-    )
-
-    description = response.choices[0].message.content
-
-    if not description:
-        raise RuntimeError("analyze_image returned empty content.")
-
-    image.description = description
-
-    logger.info(
-        "tool.analyze_image.end duration_ms=%s mime_type=%s description_length=%s",
-        int((perf_counter() - start) * 1_000),
-        mime_type,
-        len(description),
-    )
-
-    return description
-
-
-def _generate_image(*, prompt: str, scene_text: str | None) -> Image:
-    start = perf_counter()
-    logger.info(
-        "tool.generate_image.start prompt=%s scene_text=%s",
-        summarize_text(prompt),
-        summarize_text(scene_text),
-    )
-
-    final_prompt = load_prompt(
-        "generate_image.txt",
-        prompt=prompt,
-        scene_text=scene_text or "",
-    )
-
-    image = Image(
-        image_id=f"img_{uuid4().hex}",
-        url=None,
-        path=None,
-        prompt=final_prompt,
-        description=prompt,
-    )
-
-    logger.info(
-        "tool.generate_image.end duration_ms=%s image_id=%s prompt_length=%s",
-        int((perf_counter() - start) * 1_000),
-        image.image_id,
-        len(final_prompt),
-    )
-
-    return image
-
-
-def _llm_client():
-    return create_llm_client(
-        api_key=get_agent_api_key(),
-        base_url=settings.base_url,
-    )
-
-
-def _build_image_content(*, image: Image, image_bytes: bytes) -> dict[str, Any]:
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    mime_type = _guess_mime_type(image)
-
-    return {
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:{mime_type};base64,{encoded}",
-        },
-    }
-
-
-def _guess_mime_type(image: Image) -> str:
-    if image.path is None:
-        return "image/png"
-
-    suffix = Path(image.path).suffix.lower()
-
-    match suffix:
-        case ".jpg" | ".jpeg":
-            return "image/jpeg"
-        case ".png":
-            return "image/png"
-        case ".webp":
-            return "image/webp"
-        case _:
-            raise ValueError(f"Unsupported image extension: {suffix}")
-
-
-def _image_from_action(action: UserAction) -> Image | None:
-    if isinstance(action.user_action, Image):
-        return action.user_action
-
+    return Image(url=result.output, prompt=prompt)
+
+
+g.add(
+    g.edge_from(g.start_node).to(create_background_image),
+    g.edge_from(create_background_image).to(g.end_node),
+)
+
+scene_graph = g.build()
+
+
+def _serialize_payload(value: object) -> object:
+    if isinstance(value, StoryAgentDeps):
+        return {
+            "user_id": value.user_id,
+            "history_id": value.history_id,
+            "action": value.action.model_dump(),
+            "story_state": value.story_state.model_dump(),
+        }
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            key: _serialize_payload(item)
+            for key, item in asdict(value).items()
+        }
+    if isinstance(value, list):
+        return [_serialize_payload(item) for item in value]
+    return value
+
+
+def _format_sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _scene_from_output(output: object) -> Scene | None:
+    if isinstance(output, Scene):
+        return output
+    if isinstance(output, Image):
+        return Scene(background_image=output)
     return None
 
 
-def _append_text(scene: Scene, content: str) -> None:
-    if isinstance(scene.texts, list):
-        scene.texts.append(content)
-        return
+class AgentService:
+    def __init__(self, db: Session):
+        self.repository = AgentRepository(db)
 
-    scene.texts = [scene.texts, content] if scene.texts else [content]
+    def prepare_continue_history(
+        self,
+        *,
+        user_id: int,
+        api_key: str,
+        text: str | None,
+        history_id: str | None,
+        image_bytes: bytes | None,
+        image_content_type: str | None,
+    ) -> StoryAgentDeps:
+        history_id, story_state = self.repository.get_or_create_history(
+            user_id,
+            history_id,
+        )
+        action = self.repository.build_user_action(
+            user_id=user_id,
+            history_id=history_id,
+            text=text,
+            image_bytes=image_bytes,
+            image_content_type=image_content_type,
+        )
 
+        return StoryAgentDeps(
+            user_id=user_id,
+            history_id=history_id,
+            action=action,
+            story_state=story_state,
+            openai_client=create_llm_client(api_key),
+        )
 
-def _append_image(scene: Scene, image: Image) -> None:
-    if isinstance(scene.images, list):
-        scene.images.append(image)
-        return
+    async def stream_continue_history(
+        self,
+        deps: StoryAgentDeps,
+    ) -> AsyncIterator[str]:
+        yield _format_sse(
+            "start",
+            {
+                "status": "running",
+                "history_id": deps.history_id,
+                "story_state": _serialize_payload(deps.story_state),
+            },
+        )
 
-    scene.images = [scene.images, image] if scene.images else [image]
+        try:
+            story_state = self.repository.record_user_action(
+                deps.user_id,
+                deps.history_id,
+                deps.story_state,
+                deps.action,
+            )
 
+            async with scene_graph.iter(inputs=deps) as run:
+                async for event in run:
+                    if isinstance(event, list):
+                        for task in event:
+                            if isinstance(task, GraphTask):
+                                yield _format_sse(
+                                    "step",
+                                    {
+                                        "node_id": task.node_id,
+                                        "inputs": _serialize_payload(task.inputs),
+                                    },
+                                )
+                    elif isinstance(event, EndMarker):
+                        yield _format_sse(
+                            "end",
+                            {"output": _serialize_payload(event._value)},
+                        )
 
-def _ensure_scene_has_material(scene: Scene) -> None:
-    if _count_items(scene.texts) > 0 or _count_items(scene.images) > 0:
-        return
+                if run.output is not None:
+                    scene = _scene_from_output(run.output)
+                    if scene is not None:
+                        story_state = self.repository.apply_scene_output(
+                            deps.user_id,
+                            deps.history_id,
+                            story_state,
+                            scene,
+                        )
 
-    raise RuntimeError("Agent finished without generated material.")
+                    yield _format_sse(
+                        "done",
+                        {
+                            "history_id": deps.history_id,
+                            "output": _serialize_payload(run.output),
+                            "story_state": _serialize_payload(story_state),
+                        },
+                    )
+        except Exception as exc:
+            yield _format_sse("error", {"detail": str(exc)})
 
-
-def _count_items(value: Any) -> int:
-    if value is None:
-        return 0
-
-    if isinstance(value, list):
-        return len(value)
-
-    return 1
+    def get_story_image(
+        self,
+        user_id: int,
+        history_id: str,
+        image_id: str,
+    ) -> tuple[Image, bytes]:
+        return self.repository.get_image_for_history(user_id, history_id, image_id)
