@@ -32,15 +32,15 @@ class Settings(BaseSettings):
 
     agent_max_iterations: int = 5
 
-    bg_model: str = "openai:gpt-4o-mini"
-    bg_image_model: str = "dall-e-3"
+    bg_model: str
+    bg_image_model: str
     bg_image_size: str = "1792x1024"
 
-    minio_endpoint: str = "minio:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: SecretStr = SecretStr("minioadmin")
-    minio_bucket: str = "storybook"
-    minio_secure: bool = False
+    minio_endpoint: str
+    minio_access_key: str
+    minio_secret_key: SecretStr
+    minio_bucket: str
+    minio_secure: bool
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
