@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, ImagePlus } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import backCoverImage from "../../assets/book/back_cover.png";
 import coverImage from "../../assets/book/cover.png";
 import leftPageImage from "../../assets/book/left_page.png";
@@ -129,23 +129,111 @@ function BookBackCover() {
   );
 }
 
-function BookPage({ children, side }) {
+function BookPage({ backgroundUrl, children, side }) {
   const pageImage = side === "left" ? leftPageImage : rightPageImage;
 
   return (
     <div className="book-page">
-      <img alt="" aria-hidden="true" src={pageImage} />
+      <img alt="" aria-hidden="true" className="book-page-frame" src={pageImage} />
+      {backgroundUrl ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="book-page-illustration"
+          src={backgroundUrl}
+        />
+      ) : null}
       {children ? <div className="book-page-content">{children}</div> : null}
     </div>
   );
 }
 
-const pages = Array.from({ length: 8 }, () => null);
+const defaultPages = Array.from({ length: 8 }, () => null);
 
-export function StoryBookPreview() {
+function parseSseChunk(chunk, onEvent) {
+  const blocks = chunk.split("\n\n");
+
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+
+    let eventName = "message";
+    let data = "";
+
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        data += line.slice(5).trim();
+      }
+    }
+
+    if (!data) continue;
+
+    try {
+      onEvent(eventName, JSON.parse(data));
+    } catch {
+      onEvent(eventName, data);
+    }
+  }
+}
+
+async function streamContinueHistory({ text, historyId, imageFile, onEvent, signal }) {
+  const accessToken = localStorage.getItem("access_token");
+  const formData = new FormData();
+
+  if (text) formData.append("text", text);
+  if (historyId) formData.append("history_id", historyId);
+  if (imageFile) formData.append("image", imageFile);
+
+  const response = await fetch("/api/v1/stories/continue-history", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.detail || "No se pudo continuar la historia");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("La respuesta del servidor no es un stream");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lastSeparator = buffer.lastIndexOf("\n\n");
+
+    if (lastSeparator === -1) continue;
+
+    const complete = buffer.slice(0, lastSeparator + 2);
+    buffer = buffer.slice(lastSeparator + 2);
+    parseSseChunk(complete, onEvent);
+  }
+
+  if (buffer.trim()) {
+    parseSseChunk(buffer, onEvent);
+  }
+}
+
+export function StoryBookPreview({ pages = defaultPages }) {
   const leafCount = Math.ceil(pages.length / 2);
   const [currentLeaf, setCurrentLeaf] = useState(0);
   const [previewDirection, setPreviewDirection] = useState(null);
+  const [isContinuing, setIsContinuing] = useState(false);
+  const continueAbortRef = useRef(null);
+  const historyIdRef = useRef(null);
 
   const zIndexes = useMemo(
     () => pages.map((_, index) => (index % 2 === 0 ? pages.length - index : undefined)),
@@ -171,6 +259,52 @@ export function StoryBookPreview() {
     setPreviewDirection(null);
   };
 
+  const continueStory = useCallback(async () => {
+    if (isContinuing) return;
+
+    continueAbortRef.current?.abort();
+    const controller = new AbortController();
+    continueAbortRef.current = controller;
+    setIsContinuing(true);
+
+    try {
+      let streamError = null;
+
+      await streamContinueHistory({
+        text: "Continuar la historia con una nueva escena",
+        historyId: historyIdRef.current,
+        signal: controller.signal,
+        onEvent: (eventName, data) => {
+          if (eventName === "start" && data.history_id) {
+            historyIdRef.current = data.history_id;
+          }
+          if (eventName === "error") {
+            streamError = new Error(data.detail || "Error al continuar la historia");
+          }
+        },
+      });
+
+      if (streamError) {
+        throw streamError;
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        console.error(error);
+      }
+    } finally {
+      if (continueAbortRef.current === controller) {
+        continueAbortRef.current = null;
+      }
+      setIsContinuing(false);
+    }
+  }, [isContinuing]);
+
+  useEffect(() => {
+    return () => {
+      continueAbortRef.current?.abort();
+    };
+  }, []);
+
   return (
     <section className="story-book-stage">
       <div className="book bound" aria-label="Libro interactivo">
@@ -192,7 +326,12 @@ export function StoryBookPreview() {
               ) : index === pages.length - 1 ? (
                 <BookBackCover />
               ) : (
-                <BookPage side={index % 2 === 0 ? "right" : "left"}>{content}</BookPage>
+                <BookPage
+                  backgroundUrl={content?.backgroundUrl}
+                  side={index % 2 === 0 ? "right" : "left"}
+                >
+                  {content?.text}
+                </BookPage>
               )}
             </div>
           ))}
@@ -217,6 +356,16 @@ export function StoryBookPreview() {
           type="button"
         >
           <ChevronLeft aria-hidden="true" />
+        </button>
+        <button
+          aria-label="Continuar historia"
+          className="book-control book-control-continue"
+          disabled={isContinuing}
+          onClick={continueStory}
+          title="Continuar historia"
+          type="button"
+        >
+          {isContinuing ? "Generando..." : "Continuar historia"}
         </button>
         <button
           aria-label="Pagina siguiente"
