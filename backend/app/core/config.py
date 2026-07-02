@@ -12,10 +12,6 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    app_name: str = "StoryBook Agent Backend"
-    environment: str = "development"
-    debug: bool = True
-
     api_host: str 
     api_port: int
 
@@ -32,7 +28,19 @@ class Settings(BaseSettings):
 
     api_key_encryption_key: SecretStr
 
+    debug: bool = False
+
     agent_max_iterations: int = 5
+
+    bg_model: str = "openai:gpt-4o-mini"
+    bg_image_model: str = "dall-e-3"
+    bg_image_size: str = "1792x1024"
+
+    minio_endpoint: str = "minio:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: SecretStr = SecretStr("minioadmin")
+    minio_bucket: str = "storybook"
+    minio_secure: bool = False
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
