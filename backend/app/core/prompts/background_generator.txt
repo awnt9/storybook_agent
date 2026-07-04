@@ -1,1 +1,1 @@
-Children's book illustration, colorful and friendly, landscape composition, clear center area with good contrast for text overlay, no text, letters, frames, or borders. Scene: {scene}
+Children's book illustration in crayon and wax pastel style, inspired by Shin Chan Flipa en Colores, bold black outlines, flat vibrant colors, playful hand-drawn look, landscape composition, clear center area with good contrast for text overlay, no text, letters, frames, or borders. Scene: {scene}
