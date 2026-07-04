@@ -1,5 +1,7 @@
 import { ChevronLeft, ChevronRight, ImagePlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { apiRequest } from "../../lib/api";
 import backCoverImage from "../../assets/book/back_cover.png";
 import coverImage from "../../assets/book/cover.png";
 import leftPageImage from "../../assets/book/left_page.png";
@@ -150,6 +152,67 @@ function BookPage({ backgroundUrl, children, side }) {
 
 const defaultPages = Array.from({ length: 8 }, () => null);
 
+function collectBlobUrls(pages) {
+  return pages
+    .filter((page) => page?.backgroundUrl?.startsWith("blob:"))
+    .map((page) => page.backgroundUrl);
+}
+
+function revokeBlobUrls(urls) {
+  for (const url of urls) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function resolveAuthenticatedImageUrl(path) {
+  const accessToken = localStorage.getItem("access_token");
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("No se pudo cargar la ilustración");
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
+async function storyStateToPages(storyState) {
+  const pages = defaultPages.map((page) => (page ? { ...page } : null));
+  const history = storyState?.history ?? [];
+
+  for (let index = 0; index < history.length; index += 1) {
+    const scene = history[index];
+    const pageIndex = index + 1;
+
+    if (pageIndex >= pages.length - 1) {
+      break;
+    }
+
+    const text = Array.isArray(scene.texts)
+      ? scene.texts.filter(Boolean).join("\n")
+      : scene.texts || "";
+
+    let backgroundUrl = null;
+    const rawUrl = scene.background_image?.url;
+
+    if (rawUrl) {
+      try {
+        backgroundUrl = await resolveAuthenticatedImageUrl(rawUrl);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    pages[pageIndex] = { text, backgroundUrl };
+  }
+
+  return pages;
+}
+
 function parseSseChunk(chunk, onEvent) {
   const blocks = chunk.split("\n\n");
 
@@ -197,7 +260,14 @@ async function streamContinueHistory({ text, historyId, imageFile, onEvent, sign
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.detail || "No se pudo continuar la historia");
+    const detail = payload?.detail;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((item) => item.msg).join(", ")
+          : "No se pudo continuar la historia",
+    );
   }
 
   const reader = response.body?.getReader();
@@ -227,17 +297,21 @@ async function streamContinueHistory({ text, historyId, imageFile, onEvent, sign
   }
 }
 
-export function StoryBookPreview({ pages = defaultPages }) {
+export function StoryBookPreview() {
+  const [pages, setPages] = useState(() => [...defaultPages]);
+  const [selectedApiKey, setSelectedApiKey] = useState(null);
+  const [isLoadingApiKey, setIsLoadingApiKey] = useState(true);
   const leafCount = Math.ceil(pages.length / 2);
   const [currentLeaf, setCurrentLeaf] = useState(0);
   const [previewDirection, setPreviewDirection] = useState(null);
   const [isContinuing, setIsContinuing] = useState(false);
   const continueAbortRef = useRef(null);
   const historyIdRef = useRef(null);
+  const blobUrlsRef = useRef([]);
 
   const zIndexes = useMemo(
     () => pages.map((_, index) => (index % 2 === 0 ? pages.length - index : undefined)),
-    []
+    [pages.length],
   );
 
   const flippedPages = useMemo(
@@ -260,7 +334,7 @@ export function StoryBookPreview({ pages = defaultPages }) {
   };
 
   const continueStory = useCallback(async () => {
-    if (isContinuing) return;
+    if (isContinuing || !selectedApiKey) return;
 
     continueAbortRef.current?.abort();
     const controller = new AbortController();
@@ -278,6 +352,18 @@ export function StoryBookPreview({ pages = defaultPages }) {
           if (eventName === "start" && data.history_id) {
             historyIdRef.current = data.history_id;
           }
+          if (eventName === "done" && data.story_state) {
+            storyStateToPages(data.story_state)
+              .then((nextPages) => {
+                revokeBlobUrls(blobUrlsRef.current);
+                blobUrlsRef.current = collectBlobUrls(nextPages);
+                setPages(nextPages);
+              })
+              .catch((error) => {
+                console.error(error);
+                toast.error("No se pudieron actualizar las páginas del libro");
+              });
+          }
           if (eventName === "error") {
             streamError = new Error(data.detail || "Error al continuar la historia");
           }
@@ -289,7 +375,7 @@ export function StoryBookPreview({ pages = defaultPages }) {
       }
     } catch (error) {
       if (error.name !== "AbortError") {
-        console.error(error);
+        toast.error(error.message);
       }
     } finally {
       if (continueAbortRef.current === controller) {
@@ -297,11 +383,34 @@ export function StoryBookPreview({ pages = defaultPages }) {
       }
       setIsContinuing(false);
     }
-  }, [isContinuing]);
+  }, [isContinuing, selectedApiKey]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    apiRequest("/api/v1/users/me/api-keys")
+      .then((apiKeys) => {
+        if (!isMounted) return;
+        setSelectedApiKey(apiKeys.find((apiKey) => apiKey.is_selected) ?? null);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setSelectedApiKey(null);
+      })
+      .finally(() => {
+        if (!isMounted) return;
+        setIsLoadingApiKey(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
       continueAbortRef.current?.abort();
+      revokeBlobUrls(blobUrlsRef.current);
     };
   }, []);
 
@@ -342,45 +451,54 @@ export function StoryBookPreview({ pages = defaultPages }) {
         </div>
       </div>
 
-      <div className="book-controls" aria-label="Controles del libro">
-        <button
-          aria-label="Pagina anterior"
-          className="book-control"
-          disabled={currentLeaf === 0}
-          onBlur={hidePreview}
-          onClick={() => setCurrentLeaf((leaf) => Math.max(leaf - 1, 0))}
-          onFocus={() => showPreview("previous")}
-          onMouseEnter={() => showPreview("previous")}
-          onMouseLeave={hidePreview}
-          title="Pagina anterior"
-          type="button"
-        >
-          <ChevronLeft aria-hidden="true" />
-        </button>
-        <button
-          aria-label="Continuar historia"
-          className="book-control book-control-continue"
-          disabled={isContinuing}
-          onClick={continueStory}
-          title="Continuar historia"
-          type="button"
-        >
-          {isContinuing ? "Generando..." : "Continuar historia"}
-        </button>
-        <button
-          aria-label="Pagina siguiente"
-          className="book-control"
-          disabled={currentLeaf === leafCount}
-          onBlur={hidePreview}
-          onClick={() => setCurrentLeaf((leaf) => Math.min(leaf + 1, leafCount))}
-          onFocus={() => showPreview("next")}
-          onMouseEnter={() => showPreview("next")}
-          onMouseLeave={hidePreview}
-          title="Pagina siguiente"
-          type="button"
-        >
-          <ChevronRight aria-hidden="true" />
-        </button>
+      <div className="book-controls-wrap">
+        <div className="book-controls" aria-label="Controles del libro">
+          <button
+            aria-label="Pagina anterior"
+            className="book-control"
+            disabled={currentLeaf === 0}
+            onBlur={hidePreview}
+            onClick={() => setCurrentLeaf((leaf) => Math.max(leaf - 1, 0))}
+            onFocus={() => showPreview("previous")}
+            onMouseEnter={() => showPreview("previous")}
+            onMouseLeave={hidePreview}
+            title="Pagina anterior"
+            type="button"
+          >
+            <ChevronLeft aria-hidden="true" />
+          </button>
+          <button
+            aria-label="Continuar historia"
+            className="book-control book-control-continue"
+            disabled={isContinuing || isLoadingApiKey || !selectedApiKey}
+            onClick={continueStory}
+            title="Continuar historia"
+            type="button"
+          >
+            {isContinuing ? "Generando..." : "Continuar historia"}
+          </button>
+          <button
+            aria-label="Pagina siguiente"
+            className="book-control"
+            disabled={currentLeaf === leafCount}
+            onBlur={hidePreview}
+            onClick={() => setCurrentLeaf((leaf) => Math.min(leaf + 1, leafCount))}
+            onFocus={() => showPreview("next")}
+            onMouseEnter={() => showPreview("next")}
+            onMouseLeave={hidePreview}
+            title="Pagina siguiente"
+            type="button"
+          >
+            <ChevronRight aria-hidden="true" />
+          </button>
+        </div>
+        <p className="book-api-key-info" aria-live="polite">
+          {isLoadingApiKey
+            ? "Comprobando API key..."
+            : selectedApiKey
+              ? `API key activa: ${selectedApiKey.label} (${selectedApiKey.masked_key})`
+              : "No hay API key seleccionada. Configúrala en tu perfil."}
+        </p>
       </div>
     </section>
   );

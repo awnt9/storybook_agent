@@ -338,6 +338,13 @@
   transform: rotateY(10deg);
 }
 
+.story-book-stage .book-controls-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .story-book-stage .book-controls {
   display: flex;
   align-items: center;
@@ -391,6 +398,15 @@
   font-size: 0.95rem;
   font-weight: 800;
   letter-spacing: 0.01em;
+}
+
+.story-book-stage .book-api-key-info {
+  margin: 0;
+  max-width: 28rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #334155;
 }
 .story-book-stage .page {
   color: transparent;
