@@ -11,7 +11,7 @@ export default function NewStory() {
 
   const handleExit = () => {
     setShowExitConfirm(false);
-    navigate("/");
+    navigate("/dashboard");
   };
 
   return (
@@ -38,7 +38,7 @@ export default function NewStory() {
       <ConfirmDialog
         isOpen={showExitConfirm}
         title="¿Salir de la historia?"
-        description="Volverás a la página inicial. Si sales ahora, podrías perder el progreso de esta sesión."
+        description="Volverás al panel principal. Si sales ahora, podrías perder el progreso de esta sesión."
         confirmLabel="Salir"
         confirmIcon={LogOut}
         confirmTone="exit"

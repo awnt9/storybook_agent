@@ -12,7 +12,7 @@ const fadeInUp = {
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const redirectTo = location.state?.redirectTo || "/";
+  const redirectTo = location.state?.redirectTo || "/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

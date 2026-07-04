@@ -17,7 +17,7 @@ function BrandMark() {
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const isHome = location.pathname === "/";
+  const isDashboard = location.pathname === "/dashboard";
   const isNewStory = location.pathname === "/nueva-historia";
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(
@@ -54,12 +54,12 @@ export default function Navbar() {
   return (
     <>
       <header className="relative z-20 mx-auto flex max-w-7xl items-center px-6 py-6">
-        <div className="flex items-center gap-6">
-          <Link to="/" className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center gap-6">
+          <Link to={isAuthenticated ? "/dashboard" : "/"} className="flex items-center gap-6">
             <BrandMark />
           </Link>
 
-          <nav className="flex items-center gap-4">
+          <nav className="flex flex-wrap items-center gap-4">
             {!isAuthenticated && (
               <>
                 <button
@@ -85,7 +85,7 @@ export default function Navbar() {
 
             {isAuthenticated && (
               <>
-                {isHome && (
+                {isDashboard && (
                   <>
                     <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
                       |
@@ -115,7 +115,7 @@ export default function Navbar() {
         </div>
       </header>
 
-      {isAuthenticated && isHome && (
+      {isAuthenticated && isDashboard && (
         <ProfileModal
           isOpen={isProfileOpen}
           onClose={() => setIsProfileOpen(false)}
