@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react";
-import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Loader2, LogOut, Trash2, X } from "lucide-react";
 
 export default function ConfirmDialog({
   isOpen,
   title,
   description,
   confirmLabel = "Eliminar",
+  confirmIcon: ConfirmIcon = Trash2,
+  confirmTone = "danger",
   isPending = false,
   onCancel,
   onConfirm,
@@ -17,6 +19,15 @@ export default function ConfirmDialog({
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const iconWrapClass =
+    confirmTone === "exit"
+      ? "bg-orange-300"
+      : "bg-red-300";
+  const confirmButtonClass =
+    confirmTone === "exit"
+      ? "bg-orange-300"
+      : "bg-red-400";
 
   return (
     <div
@@ -31,7 +42,7 @@ export default function ConfirmDialog({
     >
       <div className="w-full max-w-md rounded-[2rem] border-4 border-slate-900 bg-[#fff5cf] p-5 shadow-[10px_10px_0_#111827] md:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border-3 border-slate-900 bg-red-300">
+          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border-3 border-slate-900 ${iconWrapClass}`}>
             <AlertTriangle className="h-6 w-6" aria-hidden="true" />
           </div>
           <button
@@ -66,10 +77,18 @@ export default function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={isPending}
-            className="flex items-center justify-center gap-2 rounded-2xl border-3 border-slate-900 bg-red-400 px-4 py-3 font-black shadow-[3px_3px_0_#111827] disabled:cursor-not-allowed disabled:opacity-60"
+            className={`flex items-center justify-center gap-2 rounded-2xl border-3 border-slate-900 px-4 py-3 font-black shadow-[3px_3px_0_#111827] disabled:cursor-not-allowed disabled:opacity-60 ${confirmButtonClass}`}
           >
-            {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Trash2 className="h-5 w-5" />}
-            {isPending ? "Eliminando..." : confirmLabel}
+            {isPending ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <ConfirmIcon className="h-5 w-5" />
+            )}
+            {isPending
+              ? confirmTone === "exit"
+                ? "Saliendo..."
+                : "Eliminando..."
+              : confirmLabel}
           </button>
         </div>
       </div>
