@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, is_dataclass
+from urllib.request import urlopen
 
 from pydantic import BaseModel
 from pydantic_graph import EndMarker, GraphBuilder, StepContext
 from pydantic_graph.graph_builder import GraphTask
 from sqlmodel import Session
 
-from app.core.agents.agents import bg_generator
+from app.core.prompt_loader import load_prompt
 from app.core.config import settings
 from app.core.openai_client import create_llm_client
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.story_elements import (
     Image,
-    ImageDeps,
     Scene,
     StoryAgentDeps,
 )
@@ -30,16 +31,24 @@ async def create_background_image(ctx: StepContext[None, None, StoryAgentDeps]) 
     if not prompt:
         raise ValueError("Background generation requires a text prompt")
 
-    result = await bg_generator.run(
-        prompt,
-        deps=ImageDeps(
-            openai_client=ctx.inputs.openai_client,
-            image_model=settings.bg_image_model,
-            image_size=settings.bg_image_size,
-        ),
+    response = await ctx.inputs.openai_client.images.generate(
+        model=settings.bg_image_model,
+        prompt=load_prompt("background_generator.txt", scene=prompt.strip()),
+        n=1,
+        size=settings.bg_image_size,
+        quality=settings.bg_image_quality,
     )
 
-    return Image(url=result.output, prompt=prompt)
+    image_data = response.data[0]
+    if image_data.b64_json:
+        photo_bytes = base64.b64decode(image_data.b64_json)
+    elif image_data.url:
+        with urlopen(image_data.url) as remote_image:
+            photo_bytes = remote_image.read()
+    else:
+        raise ValueError("Image generation returned no data")
+
+    return ctx.inputs.store_generated_image(photo_bytes, prompt)
 
 
 g.add(
@@ -108,12 +117,26 @@ class AgentService:
             image_content_type=image_content_type,
         )
 
+        def store_generated_image(
+            photo_bytes: bytes,
+            prompt: str | None = None,
+        ) -> Image:
+            return self.repository.store_image(
+                user_id,
+                history_id,
+                photo_bytes,
+                prompt=prompt,
+            )
+
+        openai_client = create_llm_client(api_key)
+
         return StoryAgentDeps(
             user_id=user_id,
             history_id=history_id,
             action=action,
             story_state=story_state,
-            openai_client=create_llm_client(api_key),
+            openai_client=openai_client,
+            store_generated_image=store_generated_image,
         )
 
     async def stream_continue_history(

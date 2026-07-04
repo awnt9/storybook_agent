@@ -34,7 +34,8 @@ class Settings(BaseSettings):
 
     bg_model: str
     bg_image_model: str
-    bg_image_size: str = "1792x1024"
+    bg_image_size: str = "1536x1024"
+    bg_image_quality: str = "medium"
 
     minio_endpoint: str
     minio_access_key: str

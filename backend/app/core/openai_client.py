@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 
 def create_llm_client(
     api_key: str,
     base_url: str | None = None,
-) -> OpenAI:
+) -> AsyncOpenAI:
     if base_url:
-        return OpenAI(
+        return AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
         )
 
-    return OpenAI(api_key=api_key)
+    return AsyncOpenAI(api_key=api_key)
