@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import ProfileModal from "./ProfileModal";
 
 export default function Navbar() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isHome = location.pathname === "/";
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(localStorage.getItem("access_token")),
@@ -51,30 +53,33 @@ export default function Navbar() {
                 <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
                   |
                 </span>
+                <a
+                  href="https://github.com/awnt9/StoryBook_Agent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
+                >
+                  Repositorio de GitHub
+                </a>
               </>
             )}
 
-            <a
-              href="https://github.com/awnt9/StoryBook_Agent"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-            >
-              Repositorio de GitHub
-            </a>
-
             {isAuthenticated && (
               <>
-                <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
-                  |
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsProfileOpen(true)}
-                  className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-                >
-                  Mis API keys
-                </button>
+                {isHome && (
+                  <>
+                    <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
+                      |
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsProfileOpen(true)}
+                      className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
+                    >
+                      Mis API keys
+                    </button>
+                  </>
+                )}
                 <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
                   |
                 </span>
@@ -91,7 +96,7 @@ export default function Navbar() {
         </div>
       </header>
 
-      {isAuthenticated && (
+      {isAuthenticated && isHome && (
         <ProfileModal
           isOpen={isProfileOpen}
           onClose={() => setIsProfileOpen(false)}
