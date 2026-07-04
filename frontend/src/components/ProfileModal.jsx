@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import ConfirmDialog from "./ConfirmDialog";
@@ -126,7 +127,7 @@ export default function ProfileModal({ isOpen, onClose }) {
     toast.success("API key copiada");
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="profile-title" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-[2rem] border-4 border-slate-900 bg-[#fff5cf] p-2 shadow-[12px_12px_0_#111827] md:p-3">
         <div className="max-h-[calc(92vh-2rem)] overflow-y-auto p-3 pr-4 md:p-4 md:pr-5">
@@ -181,6 +182,7 @@ export default function ProfileModal({ isOpen, onClose }) {
         onCancel={() => setKeyToDelete(null)}
         onConfirm={() => deleteApiKey(keyToDelete.id)}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
