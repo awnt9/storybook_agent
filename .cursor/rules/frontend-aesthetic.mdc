@@ -1,0 +1,37 @@
+---
+description: Estética Flipa en Colores para frontend e ilustraciones
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Estética StoryBook Agent
+
+Lee `docs/DESIGN.md` antes de cambiar UI, CSS o layouts.
+
+## Identidad
+
+Inspiración: **Shin Chan: Flipa en Colores** — menú de videojuego infantil, crayón, colores planos saturados, bordes negros gruesos, sombras duras. **No** SaaS, **no** glassmorphism, **no** gradientes arcoíris de fondo.
+
+## Tokens obligatorios
+
+- Fondo: `bg-[#fff5cf]`
+- Bordes: `border-4 border-slate-900` (o `border-3` en elementos pequeños)
+- Sombra: `shadow-[6px_6px_0_#111827]` o `shadow-[8px_8px_0_#111827]`
+- Títulos: `font-black`
+- CTAs: `rounded-3xl`, `bg-pink-400` (primario) / `bg-cyan-300` (secundario)
+- Tarjetas: `rounded-[2rem] bg-white`
+
+## Por pantalla
+
+- `/` y `/dashboard`: pocos elementos, botones grandes, sin landing corporativa densa.
+- `/nueva-historia`: UI mínima; el libro domina.
+- No añadir `backdrop-blur` ni fondos semitransparentes sin aprobación explícita.
+- Arcoíris de fondo: solo `GamePageBackdrop` / `SoftRainbowBackground` en lobby; opacidad moderada, tarjetas siempre sólidas.
+
+## Ilustraciones
+
+Si tocas `backend/app/core/prompts/background_generator.txt`, mantén estilo crayón infantil con contornos marcados y colores vivos (ver `docs/DESIGN.md`).
+
+## Antes de terminar
+
+Verificar checklist en `docs/DESIGN.md`. Si un cambio mejora legibilidad pero rompe la identidad, buscar otra solución dentro del sistema visual.

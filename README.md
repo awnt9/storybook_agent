@@ -22,6 +22,8 @@ The agent is wrapped inside an application that provides the structure and runti
 - story state management,
 - hard limits for turns and generated images.
 
+**Visual design:** the UI follows a *Shin Chan: Flipa en Colores*–inspired aesthetic (chunky borders, saturated flat colors, crayon-like illustrations). See [docs/DESIGN.md](docs/DESIGN.md) for the full style guide.
+
 ---
 
 ## 2. Backend Architecture
