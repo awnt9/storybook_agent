@@ -4,7 +4,37 @@ Interactive AI storytelling application where a child uploads a photo of a hand-
 
 ---
 
-## 1. Project Goal
+## Quick start
+
+```bash
+cp .env.example .env          # set JWT_* and API_KEY_ENCRYPTION_KEY (see DEVELOPMENT.md)
+just update                   # build + start Docker stack
+docker compose exec backend alembic upgrade head
+```
+
+Open http://localhost:5173 → register → add and **select** an OpenAI API key → **Nueva historia**.
+
+| Service | URL (defaults) |
+|---|---|
+| App | http://localhost:5173 |
+| API docs | http://localhost:8000/docs |
+| MinIO console | http://localhost:9001 |
+| pgweb | http://localhost:8081 |
+
+---
+
+## Documentation
+
+| Document | Audience | Contents |
+|---|---|---|
+| [AGENTS.md](AGENTS.md) | AI agents | Repo map, conventions, pipeline entry points |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Developers | Layers, `story_pipeline`, auth, data model |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developers | Docker, `.env`, `just`, Alembic migrations |
+| [docs/DESIGN.md](docs/DESIGN.md) | Designers / frontend | *Flipa en Colores* UI style guide |
+
+---
+
+## Project goal
 
 The goal is to build an agent-driven experience where the user uploads a photograph and the agent is responsible for the rest of the story experience.
 
@@ -26,59 +56,94 @@ The agent is wrapped inside an application that provides the structure and runti
 
 ---
 
-## 2. Backend Architecture
+## Stack
 
-The backend is organized in layers. Everything inside the application boundary orchestrates story generation; external systems provide HTTP entry, the LLM, and persistence.
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, Vite, Tailwind 4, Framer Motion |
+| Backend | FastAPI, SQLModel, Alembic |
+| Story generation | pydantic-graph (`story_pipeline/`) |
+| LLM / images | OpenAI API (per-user API key) |
+| Storage | Postgres (state), MinIO (images) |
+| Runtime | Docker Compose |
+
+---
+
+## Architecture (summary)
+
+The backend is organized in layers. Story generation runs through **`story_pipeline`** (pydantic-graph), orchestrated by **`AgentService`** and exposed as SSE.
 
 ```mermaid
 flowchart LR
-    LLM[LLM]
+    LLM[OpenAI]
 
     subgraph app["Application"]
         direction TB
         API[API]
-        Service[Service]
-
-        subgraph agents_area["Agents"]
-            direction TB
-            Agents[Agents]
-            Utils[Utils]
-            Prompts[Prompts]
-            Agents <--> Utils
-            Agents --> Prompts
-        end
-
+        Service[AgentService]
+        Pipeline[story_pipeline]
         Repo[Repository]
-        Schemas["Schemas / Dataclasses"]
+        Schemas[Schemas]
 
         API <--> Service
-        Service --> Agents
+        Service --> Pipeline
         Service --> Repo
-
+        Pipeline --> Repo
         Schemas -.- Service
-        Schemas -.- Agents
-        Schemas -.- Utils
+        Schemas -.- Pipeline
         Schemas -.- Repo
     end
 
     PG[(Postgres)]
     MINIO[(MinIO)]
 
-    Agents <-->|API calls| LLM
+    Pipeline <-->|Images API| LLM
     Repo <-->|SQL| PG
     Repo <-->|objects| MINIO
 ```
 
-Only **Agents** talks to the **LLM**. Only **Repository** talks to **Postgres** and **MinIO**. The **Service** never calls the LLM or the databases directly.
-
 | Layer | Role |
 |---|---|
-| **API** | HTTP entry point: auth, multipart input, SSE responses. No business logic. |
-| **Service** | Orchestration: prepares input, runs the agent pipeline, persists state, streams events. |
-| **Agents** | Pydantic AI layer: LLM calls, tools, and prompt-driven skills. |
-| **Utils** | Agent helpers (prompt loading, image helpers, shared utilities). |
-| **Prompts** | System and task prompt templates used by agents. |
-| **Repository** | Data access: story state in Postgres, images in MinIO. |
-| **Schemas / Dataclasses** | Shared language between layers (`Image`, `Scene`, `StoryState`, deps). |
+| **API** | HTTP entry: auth, multipart input, SSE responses. No business logic. |
+| **Service** | Orchestration: prepares deps, runs the pipeline, persists state, streams events. |
+| **story_pipeline** | Graph steps (background image today; more steps planned). |
+| **Repository** | Postgres JSONB state + MinIO image bytes. |
+| **Schemas** | Domain types (`Image`, `Scene`, `StoryState`, …). |
+
+Only the **pipeline** calls OpenAI. Only **repositories** talk to Postgres and MinIO.
+
+Full diagrams, SSE contract, and frontend flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
+
+## Repository layout
+
+```text
+StoryBook_Agent/
+├── AGENTS.md
+├── docs/                  ARCHITECTURE, DEVELOPMENT, DESIGN
+├── backend/app/
+│   ├── api/v1/            REST + SSE endpoints
+│   ├── services/          AgentService, AuthService, …
+│   ├── repositories/      Postgres + MinIO
+│   ├── schemas/           Domain models
+│   ├── story_pipeline/    Active generation graph
+│   └── core/              Config, auth, prompts, OpenAI client
+└── frontend/src/
+    ├── pages/             Home, Dashboard, NewStory, …
+    ├── components/book/   Interactive story UI
+    ├── components/game/   Shared game-style UI
+    └── lib/api.js         API client + token refresh
+```
+
+---
+
+## Common commands
+
+```bash
+just update          # rebuild + restart frontend & backend
+just restart         # restart without rebuild
+just logs            # tail app logs
+```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for migrations, env vars, and troubleshooting.
