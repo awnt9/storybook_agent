@@ -1,94 +1,23 @@
 from __future__ import annotations
 
-import base64
 import json
 from collections.abc import AsyncIterator
-from dataclasses import asdict, is_dataclass
-from urllib.request import urlopen
 
-from pydantic import BaseModel
-from pydantic_graph import EndMarker, GraphBuilder, StepContext
-from pydantic_graph.graph_builder import GraphTask
 from sqlmodel import Session
 
-from app.core.prompt_loader import load_prompt
-from app.core.config import settings
 from app.core.openai_client import create_llm_client
 from app.repositories.agent_repository import AgentRepository
-from app.schemas.story_elements import (
-    Image,
-    Scene,
-    StoryAgentDeps,
+from app.schemas.story_elements import Image
+from app.story_pipeline.adapters import RepositoryImageStore
+from app.story_pipeline.deps import StoryRunDeps
+from app.story_pipeline.events import (
+    PipelineDone,
+    PipelineEnd,
+    PipelineGraphComplete,
+    PipelineStep,
 )
-
-
-g = GraphBuilder(input_type=StoryAgentDeps, output_type=Scene)
-
-
-@g.step
-async def create_background_image(ctx: StepContext[None, None, StoryAgentDeps]) -> Image:
-    prompt = ctx.inputs.action.text
-    if not prompt:
-        raise ValueError("Background generation requires a text prompt")
-
-    response = await ctx.inputs.openai_client.images.generate(
-        model=settings.bg_image_model,
-        prompt=load_prompt("background_generator.txt", scene=prompt.strip()),
-        n=1,
-        size=settings.bg_image_size,
-        quality=settings.bg_image_quality,
-    )
-
-    image_data = response.data[0]
-    if image_data.b64_json:
-        photo_bytes = base64.b64decode(image_data.b64_json)
-    elif image_data.url:
-        with urlopen(image_data.url) as remote_image:
-            photo_bytes = remote_image.read()
-    else:
-        raise ValueError("Image generation returned no data")
-
-    return ctx.inputs.store_generated_image(photo_bytes, prompt)
-
-
-g.add(
-    g.edge_from(g.start_node).to(create_background_image),
-    g.edge_from(create_background_image).to(g.end_node),
-)
-
-scene_graph = g.build()
-
-
-def _serialize_payload(value: object) -> object:
-    if isinstance(value, StoryAgentDeps):
-        return {
-            "user_id": value.user_id,
-            "history_id": value.history_id,
-            "action": value.action.model_dump(),
-            "story_state": value.story_state.model_dump(),
-        }
-    if isinstance(value, BaseModel):
-        return value.model_dump()
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            key: _serialize_payload(item)
-            for key, item in asdict(value).items()
-        }
-    if isinstance(value, list):
-        return [_serialize_payload(item) for item in value]
-    return value
-
-
-def _format_sse(event: str, data: object) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _scene_from_output(output: object) -> Scene | None:
-    if isinstance(output, Scene):
-        return output
-    if isinstance(output, Image):
-        return Scene(background_image=output)
-    return None
+from app.story_pipeline.runner import run_scene_graph
+from app.story_pipeline.serialization import scene_from_output, serialize_pipeline_value
 
 
 class AgentService:
@@ -104,7 +33,7 @@ class AgentService:
         history_id: str | None,
         image_bytes: bytes | None,
         image_content_type: str | None,
-    ) -> StoryAgentDeps:
+    ) -> StoryRunDeps:
         history_id, story_state = self.repository.get_or_create_history(
             user_id,
             history_id,
@@ -117,38 +46,29 @@ class AgentService:
             image_content_type=image_content_type,
         )
 
-        def store_generated_image(
-            photo_bytes: bytes,
-            prompt: str | None = None,
-        ) -> Image:
-            return self.repository.store_image(
-                user_id,
-                history_id,
-                photo_bytes,
-                prompt=prompt,
-            )
-
-        openai_client = create_llm_client(api_key)
-
-        return StoryAgentDeps(
+        return StoryRunDeps(
             user_id=user_id,
             history_id=history_id,
             action=action,
             story_state=story_state,
-            openai_client=openai_client,
-            store_generated_image=store_generated_image,
+            openai_client=create_llm_client(api_key),
+            image_store=RepositoryImageStore(
+                self.repository,
+                user_id=user_id,
+                history_id=history_id,
+            ),
         )
 
     async def stream_continue_history(
         self,
-        deps: StoryAgentDeps,
+        deps: StoryRunDeps,
     ) -> AsyncIterator[str]:
-        yield _format_sse(
+        yield self._format_sse(
             "start",
             {
                 "status": "running",
                 "history_id": deps.history_id,
-                "story_state": _serialize_payload(deps.story_state),
+                "story_state": serialize_pipeline_value(deps.story_state),
             },
         )
 
@@ -160,26 +80,19 @@ class AgentService:
                 deps.action,
             )
 
-            async with scene_graph.iter(inputs=deps) as run:
-                async for event in run:
-                    if isinstance(event, list):
-                        for task in event:
-                            if isinstance(task, GraphTask):
-                                yield _format_sse(
-                                    "step",
-                                    {
-                                        "node_id": task.node_id,
-                                        "inputs": _serialize_payload(task.inputs),
-                                    },
-                                )
-                    elif isinstance(event, EndMarker):
-                        yield _format_sse(
-                            "end",
-                            {"output": _serialize_payload(event._value)},
-                        )
-
-                if run.output is not None:
-                    scene = _scene_from_output(run.output)
+            async for event in run_scene_graph(deps):
+                if isinstance(event, PipelineStep):
+                    yield self._format_sse(
+                        "step",
+                        {
+                            "node_id": event.node_id,
+                            "inputs": event.inputs,
+                        },
+                    )
+                elif isinstance(event, PipelineEnd):
+                    yield self._format_sse("end", {"output": event.output})
+                elif isinstance(event, PipelineGraphComplete):
+                    scene = scene_from_output(event.output)
                     if scene is not None:
                         story_state = self.repository.apply_scene_output(
                             deps.user_id,
@@ -188,16 +101,21 @@ class AgentService:
                             scene,
                         )
 
-                    yield _format_sse(
+                    done = PipelineDone(
+                        history_id=deps.history_id,
+                        output=serialize_pipeline_value(event.output),
+                        story_state=serialize_pipeline_value(story_state),
+                    )
+                    yield self._format_sse(
                         "done",
                         {
-                            "history_id": deps.history_id,
-                            "output": _serialize_payload(run.output),
-                            "story_state": _serialize_payload(story_state),
+                            "history_id": done.history_id,
+                            "output": done.output,
+                            "story_state": done.story_state,
                         },
                     )
         except Exception as exc:
-            yield _format_sse("error", {"detail": str(exc)})
+            yield self._format_sse("error", {"detail": str(exc)})
 
     def get_story_image(
         self,
@@ -206,3 +124,7 @@ class AgentService:
         image_id: str,
     ) -> tuple[Image, bytes]:
         return self.repository.get_image_for_history(user_id, history_id, image_id)
+
+    @staticmethod
+    def _format_sse(event: str, data: object) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"

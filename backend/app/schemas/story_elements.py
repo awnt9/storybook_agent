@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
@@ -44,16 +41,6 @@ class UserAction(BaseModel):
 
     text: str | None = None
     image: Image | None = None
-
-
-@dataclass
-class StoryAgentDeps:
-    user_id: int
-    history_id: str
-    action: UserAction
-    story_state: StoryState
-    openai_client: AsyncOpenAI
-    store_generated_image: Callable[[bytes, str | None], Image]
 
 
 class StoryHistory(SQLModel, table=True):
