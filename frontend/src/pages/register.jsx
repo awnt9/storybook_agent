@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Lock, Mail, Sparkles, UserPlus } from "lucide-react";
+import { Loader2, Lock, Mail, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import GamePageBackdrop from "../components/game/GamePageBackdrop";
+import GameButton from "../components/game/GameButton";
+import Navbar from "../components/Navbar";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -23,9 +26,7 @@ export default function Register() {
     try {
       const response = await fetch("/api/v1/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
@@ -43,140 +44,83 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#fff5cf] text-slate-900">
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.7 }}
-          animate={{ opacity: 0.7, scale: 1 }}
-          transition={{ duration: 0.9, delay: 0.05 }}
-          className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-pink-300 blur-3xl"
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.7 }}
-          animate={{ opacity: 0.7, scale: 1 }}
-          transition={{ duration: 0.9, delay: 0.15 }}
-          className="absolute top-32 -right-20 h-80 w-80 rounded-full bg-cyan-300 blur-3xl"
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.7 }}
-          animate={{ opacity: 0.6, scale: 1 }}
-          transition={{ duration: 0.9, delay: 0.25 }}
-          className="absolute bottom-10 left-1/3 h-80 w-80 rounded-full bg-yellow-300 blur-3xl"
-        />
+    <div className="game-page">
+      <GamePageBackdrop stickers={false} />
+
+      <div className="relative z-10">
+        <Navbar />
       </div>
 
-      <motion.header
-        {...fadeInUp}
-        transition={{ duration: 0.5 }}
-        className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-4"
-      >
-        <Link to="/" className="flex items-center gap-3">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.7, rotate: -12 }}
-            animate={{ opacity: 1, scale: 1, rotate: 0 }}
-            transition={{ duration: 0.55, delay: 0.12 }}
-            className="flex h-12 w-12 items-center justify-center rounded-2xl border-4 border-slate-900 bg-orange-400 shadow-[5px_5px_0_#111827]"
-          >
-            <Sparkles className="h-6 w-6" />
-          </motion.div>
-          <span className="text-xl font-black tracking-tight">StoryBook Agent</span>
-        </Link>
-      </motion.header>
-
-      <main className="relative z-10 mx-auto grid max-w-7xl items-start gap-8 px-6 py-6 md:grid-cols-[1fr_440px] md:py-8">
-        <section>
-          <motion.h1
-            {...fadeInUp}
-            transition={{ duration: 0.6, delay: 0.22 }}
-            className="mt-5 max-w-xl text-5xl font-black leading-[0.95] tracking-tight md:text-6xl"
-          >
-            Crea tu cuenta.
-          </motion.h1>
-          <motion.p
-            {...fadeInUp}
-            transition={{ duration: 0.6, delay: 0.34 }}
-            className="mt-5 max-w-lg text-lg font-semibold leading-relaxed text-slate-700"
-          >
-            Registra un usuario para guardar tus cuentos, volver a tus aventuras y continuar historias cuando quieras.
-          </motion.p>
-        </section>
+      <main className="relative z-10 mx-auto max-w-lg px-6 pb-16 pt-2">
+        <motion.h1
+          {...fadeInUp}
+          transition={{ duration: 0.5, delay: 0.08 }}
+          className="game-menu-title text-4xl"
+        >
+          ¡Nuevo jugador!
+        </motion.h1>
+        <motion.p
+          {...fadeInUp}
+          transition={{ duration: 0.5, delay: 0.14 }}
+          className="mt-3 font-bold text-slate-700"
+        >
+          Crea tu cuenta y empieza tu primer cuento.
+        </motion.p>
 
         <motion.form
-          initial={{ opacity: 0, scale: 0.92, rotate: 3 }}
-          animate={{ opacity: 1, scale: 1, rotate: 0 }}
-          transition={{ duration: 0.7, delay: 0.18 }}
+          {...fadeInUp}
+          transition={{ duration: 0.55, delay: 0.2 }}
           onSubmit={handleSubmit}
-          className="rounded-[2rem] border-4 border-slate-900 bg-white p-5 shadow-[12px_12px_0_#111827] md:-translate-x-16 md:-translate-y-6"
+          className="game-card mt-8 p-6"
         >
-          <motion.h2
-            {...fadeInUp}
-            transition={{ duration: 0.45, delay: 0.32 }}
-            className="text-3xl font-black tracking-tight"
-          >
-            Registro
-          </motion.h2>
+          <h2 className="text-2xl font-black">Registro</h2>
 
-          <motion.label
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, delay: 0.44 }}
-            className="mt-5 block"
-          >
+          <label className="mt-5 block">
             <span className="text-sm font-black uppercase tracking-wide text-slate-700">Email</span>
-            <div className="mt-2 flex items-center gap-3 rounded-2xl border-4 border-slate-900 bg-cyan-100 px-4 py-3">
-              <Mail className="h-5 w-5 shrink-0" />
+            <div className="game-input-wrap game-input-wrap--cyan">
+              <Mail className="h-5 w-5 shrink-0" aria-hidden="true" />
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                className="w-full bg-transparent font-bold outline-none placeholder:text-slate-500"
                 placeholder="tu@email.com"
                 autoComplete="email"
                 required
               />
             </div>
-          </motion.label>
+          </label>
 
-          <motion.label
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, delay: 0.56 }}
-            className="mt-5 block"
-          >
+          <label className="mt-5 block">
             <span className="text-sm font-black uppercase tracking-wide text-slate-700">Password</span>
-            <div className="mt-2 flex items-center gap-3 rounded-2xl border-4 border-slate-900 bg-pink-100 px-4 py-3">
-              <Lock className="h-5 w-5 shrink-0" />
+            <div className="game-input-wrap game-input-wrap--pink">
+              <Lock className="h-5 w-5 shrink-0" aria-hidden="true" />
               <input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="w-full bg-transparent font-bold outline-none placeholder:text-slate-500"
                 placeholder="********"
                 autoComplete="new-password"
                 minLength={8}
                 required
               />
             </div>
-          </motion.label>
+          </label>
 
-          <motion.button
-            initial={{ opacity: 0, y: 18, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.45, delay: 0.68 }}
-            whileHover={{ y: -4 }}
-            whileTap={{ y: 0, scale: 0.98 }}
+          <GameButton
             type="submit"
+            variant="lime"
+            size="lg"
+            className="game-btn--block mt-6"
             disabled={isSubmitting}
-            className="mt-6 flex w-full items-center justify-center gap-3 rounded-3xl border-4 border-slate-900 bg-lime-400 px-7 py-3.5 text-lg font-black shadow-[6px_6px_0_#111827] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <UserPlus className="h-5 w-5" />}
             Registrarse
-          </motion.button>
+          </GameButton>
 
           <p className="mt-5 text-center text-sm font-bold text-slate-700">
-            Ya tienes una cuenta?{" "}
-            <Link to="/login" className="underline decoration-4 underline-offset-4 hover:text-slate-950">
-              Inicia sesion
+            ¿Ya tienes cuenta?{" "}
+            <Link to="/login" className="underline decoration-4 underline-offset-4">
+              Inicia sesión
             </Link>
           </p>
         </motion.form>

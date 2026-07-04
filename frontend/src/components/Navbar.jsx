@@ -1,18 +1,8 @@
-import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import GameBrand from "./game/GameBrand";
+import GameButton from "./game/GameButton";
 import ProfileModal from "./ProfileModal";
-
-function BrandMark() {
-  return (
-    <>
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border-4 border-slate-900 bg-orange-400 shadow-[5px_5px_0_#111827]">
-        <Sparkles className="h-6 w-6" />
-      </div>
-      <span className="text-xl font-black tracking-tight">StoryBook Agent</span>
-    </>
-  );
-}
 
 export default function Navbar() {
   const navigate = useNavigate();
@@ -23,6 +13,10 @@ export default function Navbar() {
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(localStorage.getItem("access_token")),
   );
+
+  useEffect(() => {
+    setIsAuthenticated(Boolean(localStorage.getItem("access_token")));
+  }, [location.pathname]);
 
   const logout = async () => {
     const accessToken = localStorage.getItem("access_token");
@@ -43,9 +37,9 @@ export default function Navbar() {
 
   if (isNewStory) {
     return (
-      <header className="relative z-20 mx-auto flex max-w-7xl items-center px-6 py-6">
-        <div className="flex items-center gap-6">
-          <BrandMark />
+      <header className="game-navbar-wrap">
+        <div className="game-navbar">
+          <GameBrand to="/dashboard" />
         </div>
       </header>
     );
@@ -53,62 +47,32 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="relative z-20 mx-auto flex max-w-7xl items-center px-6 py-6">
-        <div className="flex flex-wrap items-center gap-6">
-          <Link to={isAuthenticated ? "/dashboard" : "/"} className="flex items-center gap-6">
-            <BrandMark />
-          </Link>
+      <header className="game-navbar-wrap">
+        <div className="game-navbar">
+          <GameBrand to={isAuthenticated ? "/dashboard" : "/"} />
 
-          <nav className="flex flex-wrap items-center gap-4">
+          <nav>
             {!isAuthenticated && (
               <>
-                <button
-                  type="button"
-                  onClick={() => navigate("/login")}
-                  className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-                >
-                  Iniciar sesión/Registrarse
-                </button>
-                <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
-                  |
-                </span>
-                <a
-                  href="https://github.com/awnt9/StoryBook_Agent"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-                >
-                  Repositorio de GitHub
-                </a>
+                <GameButton variant="white" size="sm" onClick={() => navigate("/login")}>
+                  Entrar
+                </GameButton>
+                <GameButton variant="cyan" size="sm" onClick={() => navigate("/register")}>
+                  Registro
+                </GameButton>
               </>
             )}
 
             {isAuthenticated && (
               <>
                 {isDashboard && (
-                  <>
-                    <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
-                      |
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsProfileOpen(true)}
-                      className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-                    >
-                      Mis API keys
-                    </button>
-                  </>
+                  <GameButton variant="cyan" size="sm" onClick={() => setIsProfileOpen(true)}>
+                    API keys
+                  </GameButton>
                 )}
-                <span aria-hidden="true" className="text-lg font-semibold text-slate-500">
-                  |
-                </span>
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="text-lg font-semibold leading-relaxed text-slate-700 hover:text-slate-900"
-                >
-                  Cerrar sesión
-                </button>
+                <GameButton variant="white" size="sm" onClick={logout}>
+                  Salir
+                </GameButton>
               </>
             )}
           </nav>
@@ -116,10 +80,7 @@ export default function Navbar() {
       </header>
 
       {isAuthenticated && isDashboard && (
-        <ProfileModal
-          isOpen={isProfileOpen}
-          onClose={() => setIsProfileOpen(false)}
-        />
+        <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
       )}
     </>
   );
