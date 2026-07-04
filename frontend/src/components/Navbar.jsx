@@ -9,6 +9,7 @@ export default function Navbar() {
   const location = useLocation();
   const isDashboard = location.pathname === "/dashboard";
   const isNewStory = location.pathname === "/nueva-historia";
+  const isMyStories = location.pathname === "/mis-historias";
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(localStorage.getItem("access_token")),
@@ -70,9 +71,11 @@ export default function Navbar() {
                     API keys
                   </GameButton>
                 )}
-                <GameButton variant="white" size="sm" onClick={logout}>
-                  Salir
-                </GameButton>
+                {!isMyStories && (
+                  <GameButton variant="white" size="sm" onClick={logout}>
+                    Salir
+                  </GameButton>
+                )}
               </>
             )}
           </nav>
