@@ -14,7 +14,7 @@ from app.story_pipeline.serialization import serialize_pipeline_value
 async def run_scene_graph(
     deps: StoryRunDeps,
 ) -> AsyncIterator[PipelineStep | PipelineEnd | PipelineGraphComplete]:
-    async with scene_graph.iter(inputs=deps) as run:
+    async with scene_graph.iter(inputs=deps, deps=deps) as run:
         async for event in run:
             if isinstance(event, list):
                 for task in event:

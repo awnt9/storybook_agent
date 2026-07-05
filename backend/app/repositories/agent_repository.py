@@ -64,6 +64,7 @@ class AgentRepository:
         *,
         content_type: str | None = None,
         prompt: str | None = None,
+        description: str | None = None,
     ) -> Image:
         self._get_owned_history(user_id, history_id)
 
@@ -84,6 +85,7 @@ class AgentRepository:
             path=object_name,
             url=self.build_image_url(history_id, image_id),
             prompt=prompt,
+            description=description,
         )
 
     def read_image_bytes(self, image: Image) -> bytes:
@@ -118,7 +120,7 @@ class AgentRepository:
                 history_id,
                 image_bytes,
                 content_type=image_content_type,
-                prompt=clean_text,
+                prompt=clean_text or "Reference character photo",
             )
 
         if not clean_text and image is None:
@@ -174,6 +176,30 @@ class AgentRepository:
         scene: Scene,
     ) -> StoryState:
         state.history = [*state.history, scene]
+        state.current_scene = scene
+        return self.save_story_state(user_id, history_id, state)
+
+    def patch_image_description(
+        self,
+        user_id: int,
+        history_id: str,
+        state: StoryState,
+        image: Image,
+    ) -> StoryState:
+        if image.image_id is None or state.current_scene is None:
+            return state
+
+        scene = state.current_scene.model_copy(deep=True)
+        images = scene.images
+
+        if isinstance(images, list):
+            scene.images = [
+                image if item.image_id == image.image_id else item
+                for item in images
+            ]
+        elif images is not None and images.image_id == image.image_id:
+            scene.images = image
+
         state.current_scene = scene
         return self.save_story_state(user_id, history_id, state)
 

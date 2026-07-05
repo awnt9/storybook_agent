@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 from sqlmodel import Session
 
 from app.core.openai_client import create_llm_client
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.story_elements import Image
-from app.story_pipeline.adapters import RepositoryImageStore
+from app.story_pipeline.adapters import RepositoryImageStore, RepositoryStoryStateStore
 from app.story_pipeline.deps import StoryRunDeps
 from app.story_pipeline.events import (
     PipelineDone,
@@ -57,6 +58,13 @@ class AgentService:
                 user_id=user_id,
                 history_id=history_id,
             ),
+            state_store=RepositoryStoryStateStore(
+                self.repository,
+                user_id=user_id,
+                history_id=history_id,
+            ),
+            uploaded_image_bytes=image_bytes,
+            uploaded_image_content_type=image_content_type,
         )
 
     async def stream_continue_history(
@@ -79,8 +87,9 @@ class AgentService:
                 deps.story_state,
                 deps.action,
             )
+            graph_deps = replace(deps, story_state=story_state)
 
-            async for event in run_scene_graph(deps):
+            async for event in run_scene_graph(graph_deps):
                 if isinstance(event, PipelineStep):
                     yield self._format_sse(
                         "step",
@@ -97,7 +106,7 @@ class AgentService:
                         story_state = self.repository.apply_scene_output(
                             deps.user_id,
                             deps.history_id,
-                            story_state,
+                            graph_deps.story_state,
                             scene,
                         )
 

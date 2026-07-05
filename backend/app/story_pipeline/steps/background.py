@@ -3,22 +3,39 @@ from __future__ import annotations
 import base64
 from urllib.request import urlopen
 
-from pydantic_graph import StepContext
-
 from app.core.config import settings
 from app.core.prompt_loader import load_prompt
-from app.schemas.story_elements import Image
+from app.schemas.story_elements import Image, Scene
 from app.story_pipeline.deps import StoryRunDeps
+from app.schemas.story_pipeline import BackgroundScenePlan
 
 
-async def run(ctx: StepContext[None, None, StoryRunDeps]) -> Image:
-    prompt = ctx.inputs.action.text
-    if not prompt:
-        raise ValueError("Background generation requires a text prompt")
+def _build_scene_prompt(plan: BackgroundScenePlan) -> str:
+    scene_text = plan.scene_description.strip()
+    if plan.mood:
+        scene_text = f"{scene_text}. Mood: {plan.mood.strip()}"
+    if plan.focus:
+        scene_text = f"{scene_text}. {plan.focus.strip()}"
+    return load_prompt("background_generator.txt", scene=scene_text)
 
-    response = await ctx.inputs.openai_client.images.generate(
+
+def _carry_reference_images(deps: StoryRunDeps, scene: Scene) -> Scene:
+    working_scene = deps.story_state.current_scene
+    if working_scene is None:
+        return scene
+
+    if working_scene.images and not scene.images:
+        scene.images = working_scene.images
+
+    return scene
+
+
+async def run(deps: StoryRunDeps, plan: BackgroundScenePlan) -> Scene:
+    image_prompt = _build_scene_prompt(plan)
+
+    response = await deps.openai_client.images.generate(
         model=settings.bg_image_model,
-        prompt=load_prompt("background_generator.txt", scene=prompt.strip()),
+        prompt=image_prompt,
         n=1,
         size=settings.bg_image_size,
         quality=settings.bg_image_quality,
@@ -33,4 +50,9 @@ async def run(ctx: StepContext[None, None, StoryRunDeps]) -> Image:
     else:
         raise ValueError("Image generation returned no data")
 
-    return ctx.inputs.image_store.save(photo_bytes, prompt=prompt)
+    image: Image = deps.image_store.save(
+        photo_bytes,
+        prompt=plan.scene_description.strip(),
+    )
+    scene = Scene(background_image=image)
+    return _carry_reference_images(deps, scene)
