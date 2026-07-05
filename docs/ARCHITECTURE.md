@@ -29,8 +29,8 @@ flowchart TB
     API --> SVC
     SVC --> PIPE
     SVC --> REPO
-    PIPE -->|Images API| OPENAI
-    PIPE -->|ImageStore port| REPO
+    PIPE -->|Chat + Images API| OPENAI
+    PIPE -->|ImageStore + StoryStateStore| REPO
     REPO --> DB
     REPO --> MINIO
 ```
@@ -75,6 +75,7 @@ Only repositories talk to Postgres and MinIO directly.
 Shared domain language:
 
 - **`story_elements.py`** — `Image`, `Scene`, `StoryState`, `UserAction`, `StoryHistory` (table).
+- **`story_pipeline.py`** — `BackgroundPlannerInput`, `BackgroundScenePlan`, `ReferenceImageDescription`.
 - **`auth.py`, `user.py`, `api_key.py`** — auth and user DTOs.
 
 Schemas are plain Pydantic/SQLModel types. Pipeline runtime deps (`StoryRunDeps`) live in `story_pipeline/deps.py`, not here.
@@ -98,57 +99,85 @@ Cross-cutting infrastructure:
 
 ## Story generation: `story_pipeline` (active path)
 
-Story continuation is **not** a monolithic Pydantic AI agent loop. It is a **pydantic-graph** pipeline invoked by `AgentService`.
+Story continuation is **not** a monolithic Pydantic AI agent loop. It is a **pydantic-graph** pipeline invoked by `AgentService`, with **Pydantic AI agents** for LLM steps and **deterministic steps** for the Images API.
 
 ### Module layout
 
 ```
 story_pipeline/
-├── deps.py           # StoryRunDeps dataclass
-├── ports.py          # ImageStore protocol
-├── adapters.py       # RepositoryImageStore → AgentRepository
-├── graph.py          # Graph definition
-├── runner.py         # run_scene_graph() async iterator
-├── events.py         # PipelineStep, PipelineEnd, PipelineDone, …
-├── serialization.py  # JSON-safe values for SSE
-├── steps/
-│   └── background.py # OpenAI image generation step
-└── agents/           # placeholder for future LLM agent steps
+├── deps.py              # StoryRunDeps dataclass
+├── ports.py             # ImageStore, StoryStateStore protocols
+├── adapters.py          # RepositoryImageStore, RepositoryStoryStateStore
+├── graph.py             # Graph definition (3 nodes)
+├── runner.py            # run_scene_graph() async iterator
+├── events.py            # PipelineStep, PipelineEnd, PipelineDone, …
+├── serialization.py     # JSON-safe values for SSE
+├── agents/
+│   ├── common.py        # Shared OpenAIChatModel factory (BG_MODEL)
+│   ├── reference_image.py   # Vision agent + enrich_story_deps()
+│   └── background_planner.py # Scene planning agent
+└── steps/
+    └── background.py    # OpenAI Images API step (deterministic)
+
+core/prompts/
+├── reference_image.txt
+├── reference_image_user.txt
+├── background_planner.txt
+└── background_generator.txt
 ```
 
 ### Current graph
 
 ```mermaid
 flowchart LR
-    START([start]) --> BG[create_background_image]
+    START([start]) --> ENRICH[enrich_reference_image]
+    ENRICH --> PLAN[compose_background_prompt]
+    PLAN --> BG[create_background_image]
     BG --> END([end])
 ```
 
-- **Input:** `StoryRunDeps` (user, history, action, state, OpenAI client, image store).
+- **Input:** `StoryRunDeps` (user, history, action, state, OpenAI client, image/state stores, optional uploaded image bytes).
 - **Output:** `Scene` with `background_image` set.
 
-The background step:
+| Node | Type | Calls |
+|---|---|---|
+| `enrich_reference_image` | Pydantic AI (vision) | `agents/reference_image.enrich_story_deps()` → describes uploaded photo via `BinaryContent`, persists `Image.description` via `StoryStateStore` |
+| `compose_background_prompt` | Pydantic AI (text) | `agents/background_planner.plan_background()` → `BackgroundScenePlan` using story context + `background_planner.txt` |
+| `create_background_image` | Deterministic step | `steps/background.run()` → `background_generator.txt` + `images.generate()` (`BG_IMAGE_MODEL`) → `ImageStore.save()` → MinIO |
 
-1. Reads scene description from `deps.action.text`.
-2. Builds prompt from `core/prompts/background_generator.txt`.
-3. Calls `openai_client.images.generate()` with settings `BG_IMAGE_MODEL`, size, quality.
-4. Saves raw bytes through `ImageStore.save()` → MinIO + `Image` metadata.
+`ctx.deps` is the same `StoryRunDeps` object across all nodes; the enrich step mutates it in place so later nodes see the reference description.
+
+### AgentService orchestration (outside the graph)
+
+Before the graph runs, `AgentService.stream_continue_history()`:
+
+1. Emits SSE `start`.
+2. Calls `record_user_action()` (Postgres + MinIO if user uploaded an image).
+3. Runs `run_scene_graph(deps)`.
+4. On graph complete, calls `apply_scene_output()` and emits SSE `done`.
+
+The service does **not** implement graph steps; it only prepares deps, streams events, and persists the final scene.
 
 ### SSE contract (`POST /stories/continue-history`)
 
 | Event | Payload (summary) |
 |---|---|
 | `start` | `history_id`, `story_state` |
-| `step` | `node_id`, `inputs` |
+| `step` | `node_id`, `inputs` — one event per graph node (`enrich_reference_image`, `compose_background_prompt`, `create_background_image`) |
 | `end` | `output` |
 | `done` | `history_id`, `output`, `story_state` |
 | `error` | `detail` |
 
 Frontend book component consumes these events to update the UI and load images via authenticated image URLs.
 
-### Future: `story_pipeline/agents/`
+### Extending the pipeline
 
-An empty package placeholder exists for future **Pydantic AI** agent steps (text generation, tool loops). Today all generation logic is in `story_pipeline/steps/`. There is no `core/agents/` directory.
+- **New LLM step:** add an agent under `story_pipeline/agents/`, prompt under `core/prompts/`, wire a node in `graph.py`.
+- **New deterministic step:** add under `story_pipeline/steps/`.
+- **New DTOs:** add to `schemas/story_pipeline.py` (or `story_elements.py` for domain types).
+- Do **not** add one file per graph node by default — reuse agents/steps by domain.
+
+There is **no** `backend/app/core/agents/` directory. Prompts live only under `core/prompts/`.
 
 ---
 
@@ -222,10 +251,11 @@ Visual design is specified in [DESIGN.md](DESIGN.md).
 
 ### New story flow (simplified)
 
-1. User opens `/nueva-historia`, uploads character image and/or enters text.
-2. Frontend posts multipart to `continue-history`, reads SSE.
-3. On `done`, updates local book state from `story_state`.
-4. Background images fetched with `Authorization` header from stories image route.
+1. User opens `/nueva-historia`, sets cover photo/title on the first spread.
+2. On first **Continuar historia**, frontend sends multipart (`text`, optional cover `image`, `history_id` on later turns).
+3. Backend runs the graph (enrich → plan → generate background), streams SSE `step` events.
+4. On `done`, frontend updates book pages from `story_state`.
+5. Background images fetched with `Authorization` header from stories image route.
 
 ---
 
@@ -247,9 +277,9 @@ Persistent volumes: `postgres_data` (bind `./postgres_data`), `minio_data`.
 
 Documented decisions not yet in code:
 
-- Full multi-step LLM story agent (text generation, tool loop) — graph currently has one image step.
+- Full multi-step LLM story agent (narrative text generation, generative UI blocks, tool loops).
 - Redis session/cache layer — state is Postgres + browser storage.
 - `mis-historias` listing from API — UI placeholder.
 - Automatic Alembic on container boot.
 
-When extending the pipeline, add graph steps under `story_pipeline/steps/` and wire edges in `graph.py`.
+When extending the pipeline, add agents under `story_pipeline/agents/` or steps under `story_pipeline/steps/`, then wire edges in `graph.py`.

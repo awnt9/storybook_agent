@@ -62,8 +62,8 @@ The agent is wrapped inside an application that provides the structure and runti
 |---|---|
 | Frontend | React 19, Vite, Tailwind 4, Framer Motion |
 | Backend | FastAPI, SQLModel, Alembic |
-| Story generation | pydantic-graph (`story_pipeline/`) |
-| LLM / images | OpenAI API (per-user API key) |
+| Story generation | pydantic-graph + Pydantic AI (`story_pipeline/`) |
+| LLM / images | OpenAI Chat + Images API (per-user API key) |
 | Storage | Postgres (state), MinIO (images) |
 | Runtime | Docker Compose |
 
@@ -97,7 +97,7 @@ flowchart LR
     PG[(Postgres)]
     MINIO[(MinIO)]
 
-    Pipeline <-->|Images API| LLM
+    Pipeline <-->|Chat + Images API| LLM
     Repo <-->|SQL| PG
     Repo <-->|objects| MINIO
 ```
@@ -106,7 +106,7 @@ flowchart LR
 |---|---|
 | **API** | HTTP entry: auth, multipart input, SSE responses. No business logic. |
 | **Service** | Orchestration: prepares deps, runs the pipeline, persists state, streams events. |
-| **story_pipeline** | Graph steps (background image today; more steps planned). |
+| **story_pipeline** | pydantic-graph with Pydantic AI agents (reference vision, scene planner) + background image step. |
 | **Repository** | Postgres JSONB state + MinIO image bytes. |
 | **Schemas** | Domain types (`Image`, `Scene`, `StoryState`, …). |
 

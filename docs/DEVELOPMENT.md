@@ -130,12 +130,25 @@ The backend reads the **root** `.env` file (`backend/app/core/config.py` resolve
 
 | Variable | Default (example) | Notes |
 |---|---|---|
-| `BG_MODEL` | `openai:gpt-4o-mini` | Reserved for future text agent steps |
+| `BG_MODEL` | `openai:gpt-4o-mini` | Text model for background scene planning (`compose_background_prompt`) |
 | `BG_IMAGE_MODEL` | `gpt-image-1` | Images API model for backgrounds |
 | `BG_IMAGE_SIZE` | `1536x1024` | |
 | `BG_IMAGE_QUALITY` | `medium` | |
 
 User API keys are stored encrypted; the app uses the **selected** key per user, not a global OpenAI key in `.env`.
+
+### Prompt templates
+
+Loaded from `backend/app/core/prompts/` via `load_prompt()`:
+
+| File | Used by |
+|---|---|
+| `reference_image.txt` | Vision agent instructions (`enrich_reference_image`) |
+| `reference_image_user.txt` | Vision agent user turn |
+| `background_planner.txt` | Scene planner agent (`compose_background_prompt`) |
+| `background_generator.txt` | Images API prompt wrapper (`create_background_image`) |
+
+Do not hardcode prompt text in Python — add or edit `.txt` files under `core/prompts/`.
 
 ### Docker Compose / infra
 

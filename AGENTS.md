@@ -8,7 +8,7 @@ This file is the **primary entry point** for agents working on StoryBook Agent. 
 
 StoryBook Agent is a monorepo: **FastAPI backend** + **React (Vite) frontend**, orchestrated with **Docker Compose**. Users register, store an OpenAI API key, upload a hand-drawn character photo, and continue an illustrated story via **SSE streaming**.
 
-**Stack:** Python 3.12, FastAPI, SQLModel, Alembic, MinIO, Postgres, OpenAI Images API, pydantic-graph, React 19, Tailwind 4, Framer Motion.
+**Stack:** Python 3.12, FastAPI, SQLModel, Alembic, MinIO, Postgres, OpenAI (Chat + Images API), pydantic-graph, Pydantic AI, React 19, Tailwind 4, Framer Motion.
 
 ---
 
@@ -53,14 +53,16 @@ StoryBook_Agent/
 
 | Path | Status | Notes |
 |---|---|---|
-| `backend/app/story_pipeline/` | **ACTIVE** | pydantic-graph pipeline used by `AgentService` |
+| `backend/app/story_pipeline/` | **ACTIVE** | pydantic-graph pipeline (3 nodes) used by `AgentService` |
+| `backend/app/story_pipeline/agents/` | **ACTIVE** | Pydantic AI agents: reference image vision, background planner |
+| `backend/app/story_pipeline/steps/background.py` | **ACTIVE** | OpenAI Images API step (deterministic) |
 | `backend/app/services/agent_service.py` | **ACTIVE** | Prepares deps, runs graph, streams SSE, persists state |
-| `backend/app/core/prompts/background_generator.txt` | **ACTIVE** | Loaded by `core/prompt_loader.py` for background step |
-| `backend/app/story_pipeline/agents/` | **PLACEHOLDER** | Empty package reserved for future LLM agent steps |
+| `backend/app/schemas/story_pipeline.py` | **ACTIVE** | Pipeline DTOs (`BackgroundScenePlan`, …) |
+| `backend/app/core/prompts/*.txt` | **ACTIVE** | All LLM/image prompt templates (load via `prompt_loader.py`) |
 
 There is **no** `backend/app/core/agents/` folder in this repo. Prompts live only under `core/prompts/`.
 
-**When adding generation logic:** extend `story_pipeline/` (new steps in `steps/`, future agents in `story_pipeline/agents/`).
+**When adding generation logic:** new LLM behavior → `story_pipeline/agents/` + prompt file; deterministic I/O → `story_pipeline/steps/`; wire nodes in `graph.py`. Do not add one file per graph node by default.
 
 ---
 
@@ -77,8 +79,8 @@ API  →  Service  →  Repository  →  Postgres / MinIO
 | **API** (`api/v1/`) | Auth deps, parse multipart/form, return `StreamingResponse` | Business logic, direct DB/OpenAI calls |
 | **Service** | Orchestrate pipeline, format SSE, call repositories | Raw SQL, MinIO SDK, graph step implementation |
 | **Repository** | CRUD, JSONB state, image bytes in MinIO | HTTP, SSE, OpenAI |
-| **story_pipeline** | Graph steps, use `StoryRunDeps`, call `ImageStore` port | Know about FastAPI or HTTP |
-| **schemas** | Domain types (`Scene`, `StoryState`, `UserAction`, …) | FastAPI routes, pipeline orchestration |
+| **story_pipeline** | Graph nodes, Pydantic AI agents, deterministic steps; uses `StoryRunDeps` + ports | Know about FastAPI or HTTP |
+| **schemas** | Domain types (`Scene`, `StoryState`, …) and pipeline DTOs (`story_pipeline.py`) | FastAPI routes, pipeline orchestration |
 
 User OpenAI keys come from `ApiKeyService.get_selected_plaintext()` → `create_llm_client(api_key)` → passed in `StoryRunDeps`.
 
@@ -89,9 +91,9 @@ User OpenAI keys come from `ApiKeyService.get_selected_plaintext()` → `create_
 1. Frontend `POST /api/v1/stories/continue-history` (multipart: `text`, `history_id`, optional `image`).
 2. `stories.py` resolves user API key, calls `AgentService.prepare_continue_history()`.
 3. `AgentService.stream_continue_history()` records user action, runs `run_scene_graph(deps)`.
-4. Graph (`story_pipeline/graph.py`): `start → create_background_image → end` → returns `Scene`.
-5. Background step calls OpenAI Images API, saves bytes via `RepositoryImageStore` → MinIO.
-6. SSE events: `start` → `step` → `end` → `done` (or `error`).
+4. Graph (`story_pipeline/graph.py`): `enrich_reference_image → compose_background_prompt → create_background_image → end` → returns `Scene`.
+5. Enrich step (Pydantic AI vision) describes uploaded reference photos; planner step builds scene brief; background step calls Images API and saves via `RepositoryImageStore` → MinIO.
+6. SSE events: `start` → `step` (×3) → `end` → `done` (or `error`).
 7. Final `story_state` persisted in `story_histories.state` (JSONB).
 
 Images are served at `GET /api/v1/stories/{history_id}/images/{image_id}` (auth required).
@@ -151,7 +153,7 @@ Migrations are **manual** — see `docs/DEVELOPMENT.md`.
 
 1. **Minimal diffs** — match existing style; do not refactor unrelated code.
 2. **Whole-layer placement** — new HTTP route in `api/`, orchestration in `services/`, persistence in `repositories/`.
-3. **Domain types in `schemas/story_elements.py`** — keep `StoryAgentDeps`-style coupling out of schemas; pipeline deps live in `story_pipeline/deps.py`.
+3. **Domain types in `schemas/`** — story domain in `story_elements.py`; pipeline DTOs in `story_pipeline.py`; runtime deps in `story_pipeline/deps.py`.
 4. **Prompts** — text files under `backend/app/core/prompts/`; load via `load_prompt()`.
 5. **No secrets in git** — `.env` is gitignored.
 6. **Do not commit** `postgres_data/`, `__pycache__/`, or local `.agents/` unless explicitly asked.
