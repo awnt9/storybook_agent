@@ -8,20 +8,30 @@ import leftPageImage from "../../assets/book/left_page.png";
 import rightPageImage from "../../assets/book/right_page.png";
 import "./style.css";
 
-function CoverPhotoInput() {
+const DEFAULT_STORY_TITLE = "Título del cuento";
+
+function CoverPhotoInput({ photoFile, onPhotoChange }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
 
   useEffect(() => {
+    if (!photoFile) {
+      setPreviewUrl(null);
+      return undefined;
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(photoFile);
+    setPreviewUrl(nextPreviewUrl);
+
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      URL.revokeObjectURL(nextPreviewUrl);
     };
-  }, [previewUrl]);
+  }, [photoFile]);
 
   const loadPhoto = (photo) => {
     if (!photo?.type.startsWith("image/")) return;
-    setPreviewUrl(URL.createObjectURL(photo));
+    onPhotoChange(photo);
   };
 
   const selectPhoto = (event) => {
@@ -89,9 +99,14 @@ function BookCover() {
   );
 }
 
-function BookCoverEditor({ isVisible, isPreviewing }) {
-  const [title, setTitle] = useState("Título del cuento");
-
+function BookCoverEditor({
+  coverPhotoFile,
+  coverTitle,
+  isVisible,
+  isPreviewing,
+  onCoverPhotoChange,
+  onCoverTitleChange,
+}) {
   return (
     <div
       aria-hidden={!isVisible}
@@ -103,12 +118,12 @@ function BookCoverEditor({ isVisible, isPreviewing }) {
         .filter(Boolean)
         .join(" ")}
     >
-      <CoverPhotoInput />
+      <CoverPhotoInput onPhotoChange={onCoverPhotoChange} photoFile={coverPhotoFile} />
       <textarea
         aria-label="Título del cuento"
         className="cover-text-input cover-story-title-input"
         maxLength={35}
-        onChange={(event) => setTitle(event.target.value)}
+        onChange={(event) => onCoverTitleChange(event.target.value)}
         onClick={(event) => event.currentTarget.select()}
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={(event) => {
@@ -117,7 +132,7 @@ function BookCoverEditor({ isVisible, isPreviewing }) {
         rows={2}
         spellCheck="false"
         tabIndex={isVisible ? 0 : -1}
-        value={title}
+        value={coverTitle}
       />
     </div>
   );
@@ -135,8 +150,7 @@ function BookPage({ backgroundUrl, children, side }) {
   const pageImage = side === "left" ? leftPageImage : rightPageImage;
 
   return (
-    <div className="book-page">
-      <img alt="" aria-hidden="true" className="book-page-frame" src={pageImage} />
+    <div className={`book-page book-page--${side}`}>
       {backgroundUrl ? (
         <img
           alt=""
@@ -144,7 +158,9 @@ function BookPage({ backgroundUrl, children, side }) {
           className="book-page-illustration"
           src={backgroundUrl}
         />
-      ) : null}
+      ) : (
+        <img alt="" aria-hidden="true" className="book-page-frame" src={pageImage} />
+      )}
       {children ? <div className="book-page-content">{children}</div> : null}
     </div>
   );
@@ -299,6 +315,8 @@ async function streamContinueHistory({ text, historyId, imageFile, onEvent, sign
 
 export function StoryBookPreview() {
   const [pages, setPages] = useState(() => [...defaultPages]);
+  const [coverPhotoFile, setCoverPhotoFile] = useState(null);
+  const [coverTitle, setCoverTitle] = useState(DEFAULT_STORY_TITLE);
   const [selectedApiKey, setSelectedApiKey] = useState(null);
   const [isLoadingApiKey, setIsLoadingApiKey] = useState(true);
   const leafCount = Math.ceil(pages.length / 2);
@@ -343,10 +361,29 @@ export function StoryBookPreview() {
 
     try {
       let streamError = null;
+      const isFirstContinue = !historyIdRef.current;
+      let text = "Continuar la historia con una nueva escena";
+      let imageFile;
+
+      if (isFirstContinue) {
+        const trimmedTitle = coverTitle.trim();
+        if (coverPhotoFile) {
+          text =
+            trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE
+              ? `Comienza la historia "${trimmedTitle}" con el protagonista de la foto de portada en un escenario amplio de fondo.`
+              : "Comienza la historia con el protagonista de la foto de portada en un escenario amplio de fondo.";
+          imageFile = coverPhotoFile;
+        } else if (trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE) {
+          text = `Comienza la historia "${trimmedTitle}" con un escenario amplio de fondo.`;
+        } else {
+          text = "Comienza la historia con un escenario amplio de fondo.";
+        }
+      }
 
       await streamContinueHistory({
-        text: "Continuar la historia con una nueva escena",
+        text,
         historyId: historyIdRef.current,
+        imageFile,
         signal: controller.signal,
         onEvent: (eventName, data) => {
           if (eventName === "start" && data.history_id) {
@@ -383,7 +420,7 @@ export function StoryBookPreview() {
       }
       setIsContinuing(false);
     }
-  }, [isContinuing, selectedApiKey]);
+  }, [coverPhotoFile, coverTitle, isContinuing, selectedApiKey]);
 
   useEffect(() => {
     let isMounted = true;
@@ -445,8 +482,12 @@ export function StoryBookPreview() {
             </div>
           ))}
           <BookCoverEditor
+            coverPhotoFile={coverPhotoFile}
+            coverTitle={coverTitle}
             isPreviewing={currentLeaf === 0 && previewDirection === "next"}
             isVisible={currentLeaf === 0}
+            onCoverPhotoChange={setCoverPhotoFile}
+            onCoverTitleChange={setCoverTitle}
           />
         </div>
       </div>
