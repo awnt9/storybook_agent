@@ -30,11 +30,17 @@ export default function Login() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
       if (!response.ok) {
-        throw new Error("No se pudo iniciar sesion");
+        const payload = await response.json().catch(() => null);
+        const detail = payload?.detail;
+        throw new Error(
+          detail === "Invalid credentials"
+            ? "Email o contraseña incorrectos"
+            : detail || "No se pudo iniciar sesión",
+        );
       }
 
       const data = await response.json();

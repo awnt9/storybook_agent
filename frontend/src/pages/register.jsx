@@ -17,25 +17,51 @@ export default function Register() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+
+    const normalizedEmail = email.trim();
+    if (password !== confirmPassword) {
+      toast.error("Las contraseñas no coinciden");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const response = await fetch("/api/v1/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: normalizedEmail, password }),
       });
 
       if (!response.ok) {
-        throw new Error("No se pudo registrar el usuario");
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail || "No se pudo registrar el usuario");
       }
 
-      toast.success("Usuario registrado");
-      navigate("/login");
+      const loginResponse = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: normalizedEmail, password }),
+      });
+
+      if (!loginResponse.ok) {
+        toast.success("Usuario registrado. Inicia sesión con tu contraseña.");
+        navigate("/login");
+        return;
+      }
+
+      const data = await loginResponse.json();
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+
+      toast.success("¡Cuenta creada! Bienvenido.");
+      navigate("/dashboard", { replace: true });
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -98,6 +124,22 @@ export default function Register() {
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                placeholder="********"
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+            </div>
+          </label>
+
+          <label className="mt-5 block">
+            <span className="text-sm font-black uppercase tracking-wide text-slate-700">Repetir password</span>
+            <div className="game-input-wrap game-input-wrap--pink">
+              <Lock className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
                 placeholder="********"
                 autoComplete="new-password"
                 minLength={8}
