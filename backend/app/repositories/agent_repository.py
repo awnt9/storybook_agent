@@ -18,21 +18,23 @@ class AgentRepository:
         self.minio = get_minio_client()
         self.bucket = settings.minio_bucket
 
-    def create_history(self, user_id: int) -> str:
+    def create_history(self, user_id: int, *, title: str | None = None) -> str:
         history_id = str(uuid4())
         state = StoryState(story_id=history_id)
-        self._insert_history(user_id, history_id, state)
+        self._insert_history(user_id, history_id, state, title=title)
         return history_id
 
     def get_or_create_history(
         self,
         user_id: int,
         history_id: str | None,
+        *,
+        title: str | None = None,
     ) -> tuple[str, StoryState]:
         if history_id:
             return history_id, self.load_story_state(user_id, history_id)
 
-        history_id = self.create_history(user_id)
+        history_id = self.create_history(user_id, title=title)
         return history_id, self.load_story_state(user_id, history_id)
 
     def load_story_state(self, user_id: int, history_id: str) -> StoryState:
@@ -225,12 +227,15 @@ class AgentRepository:
         user_id: int,
         history_id: str,
         state: StoryState,
+        *,
+        title: str | None = None,
     ) -> StoryHistory:
         persisted = self._strip_image_urls(state)
         persisted.story_id = history_id
         record = StoryHistory(
             id=history_id,
             user_id=user_id,
+            title=title,
             state=persisted.model_dump(mode="json"),
         )
         self.db.add(record)

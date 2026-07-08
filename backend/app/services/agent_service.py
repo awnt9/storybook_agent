@@ -32,12 +32,14 @@ class AgentService:
         api_key: str,
         text: str | None,
         history_id: str | None,
+        title: str | None,
         image_bytes: bytes | None,
         image_content_type: str | None,
     ) -> StoryRunDeps:
         history_id, story_state = self.repository.get_or_create_history(
             user_id,
             history_id,
+            title=title,
         )
         action = self.repository.build_user_action(
             user_id=user_id,

@@ -48,6 +48,7 @@ class StoryHistory(SQLModel, table=True):
 
     id: str = SQLField(primary_key=True, max_length=36)
     user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE", index=True)
+    title: str | None = SQLField(default=None, max_length=200)
     state: dict = SQLField(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False),

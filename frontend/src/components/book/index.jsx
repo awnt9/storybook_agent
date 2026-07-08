@@ -256,12 +256,13 @@ function parseSseChunk(chunk, onEvent) {
   }
 }
 
-async function streamContinueHistory({ text, historyId, imageFile, onEvent, signal }) {
+async function streamContinueHistory({ text, historyId, title, imageFile, onEvent, signal }) {
   const accessToken = localStorage.getItem("access_token");
   const formData = new FormData();
 
   if (text) formData.append("text", text);
   if (historyId) formData.append("history_id", historyId);
+  if (title) formData.append("title", title);
   if (imageFile) formData.append("image", imageFile);
 
   const response = await fetch("/api/v1/stories/continue-history", {
@@ -362,11 +363,19 @@ export function StoryBookPreview() {
     try {
       let streamError = null;
       const isFirstContinue = !historyIdRef.current;
+      const trimmedTitle = coverTitle.trim();
       let text = "Continuar la historia con una nueva escena";
       let imageFile;
+      let titleForRequest;
 
       if (isFirstContinue) {
-        const trimmedTitle = coverTitle.trim();
+        if (
+          trimmedTitle &&
+          trimmedTitle !== DEFAULT_STORY_TITLE
+        ) {
+          titleForRequest = trimmedTitle;
+        }
+
         if (coverPhotoFile) {
           text =
             trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE
@@ -383,6 +392,7 @@ export function StoryBookPreview() {
       await streamContinueHistory({
         text,
         historyId: historyIdRef.current,
+        title: titleForRequest,
         imageFile,
         signal: controller.signal,
         onEvent: (eventName, data) => {

@@ -22,6 +22,7 @@ async def continue_history(
     db: Session = Depends(get_db),
     text: str | None = Form(default=None),
     history_id: str | None = Form(default=None),
+    title: str | None = Form(default=None),
     image: UploadFile | None = File(default=None),
 ):
     api_key = ApiKeyService(db).get_selected_plaintext(current_user.id)
@@ -30,11 +31,14 @@ async def continue_history(
     image_bytes = image_bytes or None
 
     agent_service = AgentService(db)
+    clean_title = title.strip() if title else None
+
     deps = agent_service.prepare_continue_history(
         user_id=current_user.id,
         api_key=api_key,
         text=text,
         history_id=history_id,
+        title=clean_title,
         image_bytes=image_bytes,
         image_content_type=image.content_type if image is not None else None,
     )
