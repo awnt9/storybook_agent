@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
+
+InteractionComponentType = Literal[
+    "text_input",
+    "single_choice",
+    "image_input",
+    "yes_no",
+]
+
+UserActionType = Literal[
+    "cover_setup",
+    "advance",
+    "text_input",
+    "single_choice",
+    "image_input",
+    "yes_no",
+]
 
 
 class Image(BaseModel):
@@ -19,6 +36,20 @@ class Image(BaseModel):
     description: str | None = None
 
 
+class InteractionComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    type: InteractionComponentType
+    label: str
+    options: list[str] | None = None
+    placeholder: str | None = None
+    yes_label: str = "Sí"
+    no_label: str = "No"
+    response_text: str | None = None
+    response_image: Image | None = None
+
+
 class Scene(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -26,6 +57,7 @@ class Scene(BaseModel):
     background_image: Image | None = None
     texts: str | list[str] = []
     images: Image | list[Image] = []
+    interaction_component: InteractionComponent | None = None
 
 
 class StoryState(BaseModel):
@@ -39,6 +71,8 @@ class StoryState(BaseModel):
 class UserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    action_type: UserActionType | None = None
+    component_id: str | None = None
     text: str | None = None
     image: Image | None = None
 
