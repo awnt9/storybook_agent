@@ -8,7 +8,7 @@ from sqlmodel import Session
 
 from app.core.openai_client import create_llm_client
 from app.repositories.agent_repository import AgentRepository
-from app.schemas.story_elements import Image
+from app.schemas.story_elements import Image, UserAction
 from app.story_pipeline.adapters import RepositoryImageStore, RepositoryStoryStateStore
 from app.story_pipeline.deps import StoryRunDeps
 from app.story_pipeline.events import (
@@ -30,7 +30,7 @@ class AgentService:
         *,
         user_id: int,
         api_key: str,
-        text: str | None,
+        action_payload: UserAction,
         history_id: str | None,
         title: str | None,
         image_bytes: bytes | None,
@@ -44,16 +44,18 @@ class AgentService:
         action = self.repository.build_user_action(
             user_id=user_id,
             history_id=history_id,
-            text=text,
+            action_payload=action_payload,
             image_bytes=image_bytes,
             image_content_type=image_content_type,
         )
+        story_title = title or self.repository.get_history_title(user_id, history_id)
 
         return StoryRunDeps(
             user_id=user_id,
             history_id=history_id,
             action=action,
             story_state=story_state,
+            story_title=story_title,
             openai_client=create_llm_client(api_key),
             image_store=RepositoryImageStore(
                 self.repository,

@@ -9,6 +9,7 @@ from sqlmodel import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.schemas.user import User
+from app.schemas.story_elements import UserAction
 from app.services.agent_service import AgentService
 from app.services.api_key_service import ApiKeyService
 
@@ -20,7 +21,7 @@ router = APIRouter()
 async def continue_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    text: str | None = Form(default=None),
+    user_action: str | None = Form(default=None),
     history_id: str | None = Form(default=None),
     title: str | None = Form(default=None),
     image: UploadFile | None = File(default=None),
@@ -30,13 +31,18 @@ async def continue_history(
     image_bytes = await image.read() if image is not None else None
     image_bytes = image_bytes or None
 
+    if user_action:
+        action_payload = UserAction.model_validate_json(user_action)
+    else:
+        action_payload = UserAction(action_type="advance")
+
     agent_service = AgentService(db)
     clean_title = title.strip() if title else None
 
     deps = agent_service.prepare_continue_history(
         user_id=current_user.id,
         api_key=api_key,
-        text=text,
+        action_payload=action_payload,
         history_id=history_id,
         title=clean_title,
         image_bytes=image_bytes,

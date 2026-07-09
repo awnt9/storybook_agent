@@ -43,6 +43,10 @@ class AgentRepository:
         state.story_id = history_id
         return self._resolve_state_images(state, history_id)
 
+    def get_history_title(self, user_id: int, history_id: str) -> str | None:
+        record = self._get_owned_history(user_id, history_id)
+        return record.title
+
     def save_story_state(
         self,
         user_id: int,
@@ -109,35 +113,66 @@ class AgentRepository:
         *,
         user_id: int,
         history_id: str,
-        text: str | None,
+        action_payload: UserAction,
         image_bytes: bytes | None,
         image_content_type: str | None,
     ) -> UserAction:
-        clean_text = text.strip() if text else None
-        image = None
+        action = action_payload.model_copy(deep=True)
+        clean_text = action.text.strip() if action.text else None
+        action.text = clean_text
 
         if image_bytes:
-            image = self.store_image(
+            prompt = clean_text or "User uploaded image"
+            if action.action_type == "cover_setup":
+                prompt = clean_text or "Reference character photo"
+            action.image = self.store_image(
                 user_id,
                 history_id,
                 image_bytes,
                 content_type=image_content_type,
-                prompt=clean_text or "Reference character photo",
+                prompt=prompt,
             )
 
-        if not clean_text and image is None:
+        if action.action_type in {None, "advance"} and not clean_text and action.image is None:
+            action.action_type = "advance"
+            return action
+
+        if action.action_type == "advance":
+            return action
+
+        if not action.action_type:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide text and/or an image",
+                detail="action_type is required",
             )
 
-        if clean_text and image is not None:
-            return UserAction(text=clean_text, image=image)
+        if action.action_type in {
+            "text_input",
+            "single_choice",
+            "yes_no",
+            "image_input",
+        } and not action.component_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="component_id is required for component actions",
+            )
 
-        if clean_text:
-            return UserAction(text=clean_text)
+        if action.action_type == "image_input" and action.image is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="An image is required for image_input actions",
+            )
 
-        return UserAction(image=image)
+        if action.action_type in {"text_input", "single_choice", "yes_no"} and not clean_text:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="text is required for this action type",
+            )
+
+        if action.action_type == "cover_setup":
+            return action
+
+        return action
 
     def record_user_action(
         self,
@@ -146,19 +181,23 @@ class AgentRepository:
         state: StoryState,
         action: UserAction,
     ) -> StoryState:
-        scene = state.current_scene or Scene()
-        action_text = action.text
+        if action.component_id:
+            for scene in reversed(state.history):
+                component = scene.interaction_component
+                if component is None or component.id != action.component_id:
+                    continue
 
-        if action_text:
-            scene.texts = (
-                [*scene.texts, action_text]
-                if isinstance(scene.texts, list)
-                else [scene.texts, action_text]
-                if scene.texts
-                else [action_text]
-            )
+                updated_component = component.model_copy(
+                    update={
+                        "response_text": action.text,
+                        "response_image": action.image,
+                    }
+                )
+                scene.interaction_component = updated_component
+                break
 
-        if action.image is not None:
+        if action.action_type == "cover_setup" and action.image is not None:
+            scene = state.current_scene or Scene()
             scene.images = (
                 [*scene.images, action.image]
                 if isinstance(scene.images, list)
@@ -166,8 +205,8 @@ class AgentRepository:
                 if scene.images
                 else [action.image]
             )
+            state.current_scene = scene
 
-        state.current_scene = scene
         return self.save_story_state(user_id, history_id, state)
 
     def apply_scene_output(
@@ -285,6 +324,14 @@ class AgentRepository:
         elif scene.images is not None:
             scene.images = self._resolve_image(scene.images, history_id)
 
+        if scene.interaction_component and scene.interaction_component.response_image:
+            component = scene.interaction_component.model_copy(deep=True)
+            component.response_image = self._resolve_image(
+                component.response_image,
+                history_id,
+            )
+            scene.interaction_component = component
+
         return scene
 
     def _resolve_image(self, image: Image, history_id: str) -> Image:
@@ -315,6 +362,11 @@ class AgentRepository:
         elif scene.images is not None:
             scene.images = self._strip_image_url(scene.images)
 
+        if scene.interaction_component and scene.interaction_component.response_image:
+            component = scene.interaction_component.model_copy(deep=True)
+            component.response_image = self._strip_image_url(component.response_image)
+            scene.interaction_component = component
+
         return scene
 
     @staticmethod
@@ -336,6 +388,14 @@ class AgentRepository:
             for image in images:
                 if image is not None and image.image_id == image_id:
                     return image
+
+            component = scene.interaction_component
+            if (
+                component is not None
+                and component.response_image is not None
+                and component.response_image.image_id == image_id
+            ):
+                return component.response_image
 
         return None
 
