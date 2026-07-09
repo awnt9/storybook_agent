@@ -6,6 +6,11 @@ import backCoverImage from "../../assets/book/back_cover.png";
 import coverImage from "../../assets/book/cover.png";
 import leftPageImage from "../../assets/book/left_page.png";
 import rightPageImage from "../../assets/book/right_page.png";
+import {
+  InteractionLayer,
+  buildUserActionFromResponse,
+  isInteractionComplete,
+} from "./interaction/InteractionLayer";
 import "./style.css";
 
 const DEFAULT_STORY_TITLE = "Título del cuento";
@@ -146,7 +151,15 @@ function BookBackCover() {
   );
 }
 
-function BookPage({ backgroundUrl, children, side }) {
+function BookPage({
+  backgroundUrl,
+  narrativeText,
+  interactionComponent,
+  interactionValue,
+  onInteractionChange,
+  interactionDisabled,
+  side,
+}) {
   const pageImage = side === "left" ? leftPageImage : rightPageImage;
 
   return (
@@ -161,7 +174,15 @@ function BookPage({ backgroundUrl, children, side }) {
       ) : (
         <img alt="" aria-hidden="true" className="book-page-frame" src={pageImage} />
       )}
-      {children ? <div className="book-page-content">{children}</div> : null}
+      <div className="book-page-content book-page-content--interactive">
+        {narrativeText ? <p className="book-page-narrative">{narrativeText}</p> : null}
+        <InteractionLayer
+          component={interactionComponent}
+          disabled={interactionDisabled}
+          onChange={onInteractionChange}
+          value={interactionValue}
+        />
+      </div>
     </div>
   );
 }
@@ -223,10 +244,31 @@ async function storyStateToPages(storyState) {
       }
     }
 
-    pages[pageIndex] = { text, backgroundUrl };
+    pages[pageIndex] = {
+      text,
+      backgroundUrl,
+      sceneIndex: index,
+      interactionComponent: scene.interaction_component ?? null,
+    };
   }
 
   return pages;
+}
+
+function seedComponentResponses(storyState) {
+  const responses = {};
+  const history = storyState?.history ?? [];
+
+  for (const scene of history) {
+    const component = scene.interaction_component;
+    if (!component) continue;
+
+    if (component.response_text) {
+      responses[component.id] = component.response_text;
+    }
+  }
+
+  return responses;
 }
 
 function parseSseChunk(chunk, onEvent) {
@@ -256,11 +298,11 @@ function parseSseChunk(chunk, onEvent) {
   }
 }
 
-async function streamContinueHistory({ text, historyId, title, imageFile, onEvent, signal }) {
+async function streamContinueHistory({ userAction, historyId, title, imageFile, onEvent, signal }) {
   const accessToken = localStorage.getItem("access_token");
   const formData = new FormData();
 
-  if (text) formData.append("text", text);
+  formData.append("user_action", JSON.stringify(userAction));
   if (historyId) formData.append("history_id", historyId);
   if (title) formData.append("title", title);
   if (imageFile) formData.append("image", imageFile);
@@ -324,8 +366,10 @@ export function StoryBookPreview() {
   const [currentLeaf, setCurrentLeaf] = useState(0);
   const [previewDirection, setPreviewDirection] = useState(null);
   const [isContinuing, setIsContinuing] = useState(false);
+  const [componentResponses, setComponentResponses] = useState({});
   const continueAbortRef = useRef(null);
   const historyIdRef = useRef(null);
+  const storyStateRef = useRef(null);
   const blobUrlsRef = useRef([]);
 
   const zIndexes = useMemo(
@@ -352,6 +396,23 @@ export function StoryBookPreview() {
     setPreviewDirection(null);
   };
 
+  const latestSceneIndex = useMemo(() => {
+    let maxIndex = -1;
+    for (const page of pages) {
+      if (page?.sceneIndex != null) {
+        maxIndex = Math.max(maxIndex, page.sceneIndex);
+      }
+    }
+    return maxIndex;
+  }, [pages]);
+
+  const handleComponentChange = useCallback((componentId, value) => {
+    setComponentResponses((current) => ({
+      ...current,
+      [componentId]: value,
+    }));
+  }, []);
+
   const continueStory = useCallback(async () => {
     if (isContinuing || !selectedApiKey) return;
 
@@ -364,33 +425,45 @@ export function StoryBookPreview() {
       let streamError = null;
       const isFirstContinue = !historyIdRef.current;
       const trimmedTitle = coverTitle.trim();
-      let text = "Continuar la historia con una nueva escena";
       let imageFile;
       let titleForRequest;
+      let userAction;
 
       if (isFirstContinue) {
-        if (
-          trimmedTitle &&
-          trimmedTitle !== DEFAULT_STORY_TITLE
-        ) {
+        if (trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE) {
           titleForRequest = trimmedTitle;
         }
 
-        if (coverPhotoFile) {
-          text =
+        userAction = {
+          action_type: "cover_setup",
+          text:
             trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE
-              ? `Comienza la historia "${trimmedTitle}" con el protagonista de la foto de portada en un escenario amplio de fondo.`
-              : "Comienza la historia con el protagonista de la foto de portada en un escenario amplio de fondo.";
-          imageFile = coverPhotoFile;
-        } else if (trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE) {
-          text = `Comienza la historia "${trimmedTitle}" con un escenario amplio de fondo.`;
+              ? trimmedTitle
+              : null,
+        };
+        imageFile = coverPhotoFile ?? undefined;
+      } else {
+        const latestScene = storyStateRef.current?.history?.at(-1);
+        const component = latestScene?.interaction_component;
+
+        if (component) {
+          const responseValue = componentResponses[component.id];
+          if (!isInteractionComplete(component, responseValue)) {
+            toast.error("Responde a la pregunta de la escena antes de continuar");
+            return;
+          }
+
+          userAction = buildUserActionFromResponse(component, responseValue);
+          if (component.type === "image_input") {
+            imageFile = responseValue;
+          }
         } else {
-          text = "Comienza la historia con un escenario amplio de fondo.";
+          userAction = { action_type: "advance" };
         }
       }
 
       await streamContinueHistory({
-        text,
+        userAction,
         historyId: historyIdRef.current,
         title: titleForRequest,
         imageFile,
@@ -400,11 +473,17 @@ export function StoryBookPreview() {
             historyIdRef.current = data.history_id;
           }
           if (eventName === "done" && data.story_state) {
+            storyStateRef.current = data.story_state;
             storyStateToPages(data.story_state)
               .then((nextPages) => {
                 revokeBlobUrls(blobUrlsRef.current);
                 blobUrlsRef.current = collectBlobUrls(nextPages);
                 setPages(nextPages);
+                setComponentResponses(seedComponentResponses(data.story_state));
+                const sceneCount = data.story_state.history?.length ?? 0;
+                if (sceneCount > 0) {
+                  setCurrentLeaf(Math.ceil(sceneCount / 2));
+                }
               })
               .catch((error) => {
                 console.error(error);
@@ -430,7 +509,13 @@ export function StoryBookPreview() {
       }
       setIsContinuing(false);
     }
-  }, [coverPhotoFile, coverTitle, isContinuing, selectedApiKey]);
+  }, [
+    componentResponses,
+    coverPhotoFile,
+    coverTitle,
+    isContinuing,
+    selectedApiKey,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -484,10 +569,23 @@ export function StoryBookPreview() {
               ) : (
                 <BookPage
                   backgroundUrl={content?.backgroundUrl}
+                  interactionComponent={content?.interactionComponent}
+                  interactionDisabled={
+                    content?.sceneIndex !== latestSceneIndex ||
+                    Boolean(content?.interactionComponent?.response_text)
+                  }
+                  interactionValue={
+                    content?.interactionComponent
+                      ? componentResponses[content.interactionComponent.id]
+                      : undefined
+                  }
+                  narrativeText={content?.text}
+                  onInteractionChange={(value) => {
+                    if (!content?.interactionComponent) return;
+                    handleComponentChange(content.interactionComponent.id, value);
+                  }}
                   side={index % 2 === 0 ? "right" : "left"}
-                >
-                  {content?.text}
-                </BookPage>
+                />
               )}
             </div>
           ))}
