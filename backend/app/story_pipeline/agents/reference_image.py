@@ -36,7 +36,10 @@ async def describe_reference_image(
 
 
 async def enrich_story_deps(deps: StoryRunDeps) -> StoryRunDeps:
-    if deps.action.image is None or deps.uploaded_image_bytes is None:
+    if deps.uploaded_image_bytes is None:
+        return deps
+
+    if deps.action.image is None:
         return deps
 
     if deps.action.image.description:

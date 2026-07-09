@@ -17,5 +17,6 @@ class StoryRunDeps:
     openai_client: AsyncOpenAI
     image_store: ImageStore
     state_store: StoryStateStore
+    story_title: str | None = None
     uploaded_image_bytes: bytes | None = None
     uploaded_image_content_type: str | None = None

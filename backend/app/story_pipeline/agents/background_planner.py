@@ -6,11 +6,10 @@ from pydantic_ai import Agent, RunContext
 from app.core.prompt_loader import load_prompt
 from app.schemas.story_elements import Image, Scene, StoryState
 from app.schemas.story_pipeline import (
-    CONTINUE_STORY_TEXT,
-    DEFAULT_STORY_TITLE,
     BackgroundPlannerInput,
     BackgroundScenePlan,
 )
+from app.story_pipeline.agents.action_context import format_user_action_for_planner
 from app.story_pipeline.agents.common import chat_model
 from app.story_pipeline.deps import StoryRunDeps
 
@@ -55,6 +54,12 @@ def _scene_summary(scene: Scene) -> str | None:
     if scene.background_image and scene.background_image.prompt:
         parts.append(f"Illustration brief: {scene.background_image.prompt}")
 
+    component = scene.interaction_component
+    if component is not None:
+        parts.append(f"Interaction ({component.type}): {component.label}")
+        if component.response_text:
+            parts.append(f"Player response: {component.response_text}")
+
     if not parts:
         return None
 
@@ -75,21 +80,16 @@ def build_planner_input(deps: StoryRunDeps) -> BackgroundPlannerInput:
             deps.action.image.description or deps.action.image.prompt
         )
 
-    story_title = None
-    if deps.action.text and deps.action.text.strip() not in {
-        CONTINUE_STORY_TEXT,
-        DEFAULT_STORY_TITLE,
-    }:
-        story_title = deps.action.text.strip()
+    user_text = format_user_action_for_planner(deps.action)
 
     reference_characters = _collect_reference_characters(deps.story_state)
     if user_image_description and user_image_description not in reference_characters:
         reference_characters.insert(0, user_image_description)
 
     return BackgroundPlannerInput(
-        user_text=deps.action.text,
+        user_text=user_text,
         user_image_description=user_image_description,
-        story_title=story_title,
+        story_title=deps.story_title,
         scene_number=len(history) + 1,
         previous_scenes=previous_scenes,
         reference_characters=reference_characters,

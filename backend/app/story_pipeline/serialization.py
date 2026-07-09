@@ -13,6 +13,7 @@ def serialize_pipeline_value(value: object) -> object:
         return {
             "user_id": value.user_id,
             "history_id": value.history_id,
+            "story_title": value.story_title,
             "action": value.action.model_dump(),
             "story_state": value.story_state.model_dump(),
         }
