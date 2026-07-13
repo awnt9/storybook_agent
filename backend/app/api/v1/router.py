@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import api_keys, auth, health, stories, users
+from app.api.v1 import api_keys, auth, drafts, health, stories, users
 
 
 router = APIRouter()
@@ -33,4 +33,10 @@ router.include_router(
     stories.router,
     prefix="/stories",
     tags=["Stories"],
+)
+
+router.include_router(
+    drafts.router,
+    prefix="/drafts",
+    tags=["Drafts"],
 )
