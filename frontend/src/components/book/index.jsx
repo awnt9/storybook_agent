@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, ImagePlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { apiRequest } from "../../lib/api";
+import { loadDraft } from "../../lib/draft";
 import backCoverImage from "../../assets/book/back_cover.png";
 import coverImage from "../../assets/book/cover.png";
 import leftPageImage from "../../assets/book/left_page.png";
@@ -14,6 +15,8 @@ import {
 import "./style.css";
 
 const DEFAULT_STORY_TITLE = "Título del cuento";
+
+export { DEFAULT_STORY_TITLE };
 
 function CoverPhotoInput({ photoFile, onPhotoChange }) {
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -298,16 +301,15 @@ function parseSseChunk(chunk, onEvent) {
   }
 }
 
-async function streamContinueHistory({ userAction, historyId, title, imageFile, onEvent, signal }) {
+async function streamContinueDraft({ draftId, userAction, title, imageFile, onEvent, signal }) {
   const accessToken = localStorage.getItem("access_token");
   const formData = new FormData();
 
   formData.append("user_action", JSON.stringify(userAction));
-  if (historyId) formData.append("history_id", historyId);
   if (title) formData.append("title", title);
   if (imageFile) formData.append("image", imageFile);
 
-  const response = await fetch("/api/v1/stories/continue-history", {
+  const response = await fetch(`/api/v1/drafts/${draftId}/continue`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -356,21 +358,44 @@ async function streamContinueHistory({ userAction, historyId, title, imageFile, 
   }
 }
 
-export function StoryBookPreview() {
+export function StoryBookPreview({ draftId, onDraftActivityChange }) {
   const [pages, setPages] = useState(() => [...defaultPages]);
   const [coverPhotoFile, setCoverPhotoFile] = useState(null);
   const [coverTitle, setCoverTitle] = useState(DEFAULT_STORY_TITLE);
   const [selectedApiKey, setSelectedApiKey] = useState(null);
   const [isLoadingApiKey, setIsLoadingApiKey] = useState(true);
+  const [isDraftReady, setIsDraftReady] = useState(false);
   const leafCount = Math.ceil(pages.length / 2);
   const [currentLeaf, setCurrentLeaf] = useState(0);
   const [previewDirection, setPreviewDirection] = useState(null);
   const [isContinuing, setIsContinuing] = useState(false);
   const [componentResponses, setComponentResponses] = useState({});
   const continueAbortRef = useRef(null);
-  const historyIdRef = useRef(null);
   const storyStateRef = useRef(null);
   const blobUrlsRef = useRef([]);
+  const hasContinuedRef = useRef(false);
+
+  const reportDraftActivity = useCallback(
+    (overrides = {}) => {
+      if (!onDraftActivityChange) return;
+
+      const storyState = overrides.storyState ?? storyStateRef.current;
+      const hasHistory = (storyState?.history?.length ?? 0) > 0;
+      const hasCoverSetup = Boolean(storyState?.current_scene);
+      const nextTitle = overrides.coverTitle ?? coverTitle;
+      const hasLocalEdits =
+        Boolean(overrides.coverPhotoFile ?? coverPhotoFile) ||
+        (nextTitle.trim() !== "" && nextTitle.trim() !== DEFAULT_STORY_TITLE);
+
+      onDraftActivityChange({
+        hasProgress:
+          hasContinuedRef.current || hasHistory || hasCoverSetup || hasLocalEdits,
+        canSave: hasContinuedRef.current || hasHistory || hasCoverSetup,
+        coverTitle: nextTitle,
+      });
+    },
+    [coverPhotoFile, coverTitle, onDraftActivityChange],
+  );
 
   const zIndexes = useMemo(
     () => pages.map((_, index) => (index % 2 === 0 ? pages.length - index : undefined)),
@@ -414,7 +439,7 @@ export function StoryBookPreview() {
   }, []);
 
   const continueStory = useCallback(async () => {
-    if (isContinuing || !selectedApiKey) return;
+    if (isContinuing || !selectedApiKey || !draftId || !isDraftReady) return;
 
     continueAbortRef.current?.abort();
     const controller = new AbortController();
@@ -423,7 +448,7 @@ export function StoryBookPreview() {
 
     try {
       let streamError = null;
-      const isFirstContinue = !historyIdRef.current;
+      const isFirstContinue = !hasContinuedRef.current;
       const trimmedTitle = coverTitle.trim();
       let imageFile;
       let titleForRequest;
@@ -462,18 +487,17 @@ export function StoryBookPreview() {
         }
       }
 
-      await streamContinueHistory({
+      await streamContinueDraft({
+        draftId,
         userAction,
-        historyId: historyIdRef.current,
         title: titleForRequest,
         imageFile,
         signal: controller.signal,
         onEvent: (eventName, data) => {
-          if (eventName === "start" && data.history_id) {
-            historyIdRef.current = data.history_id;
-          }
           if (eventName === "done" && data.story_state) {
+            hasContinuedRef.current = true;
             storyStateRef.current = data.story_state;
+            reportDraftActivity({ storyState: data.story_state });
             storyStateToPages(data.story_state)
               .then((nextPages) => {
                 revokeBlobUrls(blobUrlsRef.current);
@@ -513,7 +537,10 @@ export function StoryBookPreview() {
     componentResponses,
     coverPhotoFile,
     coverTitle,
+    draftId,
     isContinuing,
+    isDraftReady,
+    reportDraftActivity,
     selectedApiKey,
   ]);
 
@@ -538,6 +565,60 @@ export function StoryBookPreview() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!draftId) {
+      setIsDraftReady(false);
+      return undefined;
+    }
+
+    setIsDraftReady(false);
+
+    loadDraft(apiRequest, draftId)
+      .then(async (payload) => {
+        if (!isMounted) return;
+
+        const storyState = payload.story_state;
+        storyStateRef.current = storyState;
+
+        if (payload.title) {
+          setCoverTitle(payload.title);
+        }
+
+        if ((storyState.history?.length ?? 0) > 0) {
+          hasContinuedRef.current = true;
+          const nextPages = await storyStateToPages(storyState);
+          revokeBlobUrls(blobUrlsRef.current);
+          blobUrlsRef.current = collectBlobUrls(nextPages);
+          setPages(nextPages);
+          setComponentResponses(seedComponentResponses(storyState));
+          const sceneCount = storyState.history.length;
+          setCurrentLeaf(Math.ceil(sceneCount / 2));
+        }
+
+        setIsDraftReady(true);
+        reportDraftActivity({
+          storyState,
+          coverTitle: payload.title ?? coverTitle,
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        console.error(error);
+        toast.error("No se pudo cargar el borrador");
+        setIsDraftReady(true);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [draftId]);
+
+  useEffect(() => {
+    reportDraftActivity();
+  }, [coverPhotoFile, coverTitle, reportDraftActivity]);
 
   useEffect(() => {
     return () => {
@@ -594,8 +675,14 @@ export function StoryBookPreview() {
             coverTitle={coverTitle}
             isPreviewing={currentLeaf === 0 && previewDirection === "next"}
             isVisible={currentLeaf === 0}
-            onCoverPhotoChange={setCoverPhotoFile}
-            onCoverTitleChange={setCoverTitle}
+            onCoverPhotoChange={(photo) => {
+              setCoverPhotoFile(photo);
+              reportDraftActivity({ coverPhotoFile: photo });
+            }}
+            onCoverTitleChange={(title) => {
+              setCoverTitle(title);
+              reportDraftActivity({ coverTitle: title });
+            }}
           />
         </div>
       </div>
@@ -619,7 +706,13 @@ export function StoryBookPreview() {
           <button
             aria-label="Continuar historia"
             className="book-control book-control-continue"
-            disabled={isContinuing || isLoadingApiKey || !selectedApiKey}
+            disabled={
+              isContinuing ||
+              isLoadingApiKey ||
+              !selectedApiKey ||
+              !draftId ||
+              !isDraftReady
+            }
             onClick={continueStory}
             title="Continuar historia"
             type="button"
