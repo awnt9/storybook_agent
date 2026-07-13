@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     minio_bucket: str
     minio_secure: bool
 
+    redis_url: str = "redis://localhost:6379/0"
+    draft_ttl_seconds: int = 259200
+
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
         env_file_encoding="utf-8",

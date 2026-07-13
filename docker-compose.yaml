@@ -28,6 +28,13 @@ services:
     depends_on:
       - db
       - minio
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: storybook_redis
+    ports:
+      - "${REDIS_PORT}:6379"
 
   minio:
     image: ${MINIO_IMAGE}
