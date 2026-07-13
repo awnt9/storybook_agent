@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import mimetypes
-from io import BytesIO
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -9,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.minio import get_minio_client
-from app.schemas.story_elements import Image, Scene, StoryHistory, StoryState, UserAction
+from app.schemas.story_elements import Image, Scene, StoryHistory, StoryState
 
 
 class AgentRepository:
@@ -24,28 +23,11 @@ class AgentRepository:
         self._insert_history(user_id, history_id, state, title=title)
         return history_id
 
-    def get_or_create_history(
-        self,
-        user_id: int,
-        history_id: str | None,
-        *,
-        title: str | None = None,
-    ) -> tuple[str, StoryState]:
-        if history_id:
-            return history_id, self.load_story_state(user_id, history_id)
-
-        history_id = self.create_history(user_id, title=title)
-        return history_id, self.load_story_state(user_id, history_id)
-
     def load_story_state(self, user_id: int, history_id: str) -> StoryState:
         record = self._get_owned_history(user_id, history_id)
         state = StoryState.model_validate(record.state)
         state.story_id = history_id
         return self._resolve_state_images(state, history_id)
-
-    def get_history_title(self, user_id: int, history_id: str) -> str | None:
-        record = self._get_owned_history(user_id, history_id)
-        return record.title
 
     def save_story_state(
         self,
@@ -62,38 +44,6 @@ class AgentRepository:
         self.db.refresh(record)
         return self.load_story_state(user_id, history_id)
 
-    def store_image(
-        self,
-        user_id: int,
-        history_id: str,
-        photo_bytes: bytes,
-        *,
-        content_type: str | None = None,
-        prompt: str | None = None,
-        description: str | None = None,
-    ) -> Image:
-        self._get_owned_history(user_id, history_id)
-
-        extension = self._extension_from_content_type(content_type, photo_bytes)
-        image_id = f"img_{uuid4().hex}"
-        object_name = self._object_name(user_id, history_id, image_id, extension)
-
-        self.minio.put_object(
-            self.bucket,
-            object_name,
-            BytesIO(photo_bytes),
-            length=len(photo_bytes),
-            content_type=content_type or mimetypes.guess_type(object_name)[0] or "application/octet-stream",
-        )
-
-        return Image(
-            image_id=image_id,
-            path=object_name,
-            url=self.build_image_url(history_id, image_id),
-            prompt=prompt,
-            description=description,
-        )
-
     def read_image_bytes(self, image: Image) -> bytes:
         if not image.path:
             raise ValueError("Image path is required to read from MinIO")
@@ -107,142 +57,6 @@ class AgentRepository:
 
     def build_image_url(self, history_id: str, image_id: str) -> str:
         return f"/api/v1/stories/{history_id}/images/{image_id}"
-
-    def build_user_action(
-        self,
-        *,
-        user_id: int,
-        history_id: str,
-        action_payload: UserAction,
-        image_bytes: bytes | None,
-        image_content_type: str | None,
-    ) -> UserAction:
-        action = action_payload.model_copy(deep=True)
-        clean_text = action.text.strip() if action.text else None
-        action.text = clean_text
-
-        if image_bytes:
-            prompt = clean_text or "User uploaded image"
-            if action.action_type == "cover_setup":
-                prompt = clean_text or "Reference character photo"
-            action.image = self.store_image(
-                user_id,
-                history_id,
-                image_bytes,
-                content_type=image_content_type,
-                prompt=prompt,
-            )
-
-        if action.action_type in {None, "advance"} and not clean_text and action.image is None:
-            action.action_type = "advance"
-            return action
-
-        if action.action_type == "advance":
-            return action
-
-        if not action.action_type:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="action_type is required",
-            )
-
-        if action.action_type in {
-            "text_input",
-            "single_choice",
-            "yes_no",
-            "image_input",
-        } and not action.component_id:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="component_id is required for component actions",
-            )
-
-        if action.action_type == "image_input" and action.image is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An image is required for image_input actions",
-            )
-
-        if action.action_type in {"text_input", "single_choice", "yes_no"} and not clean_text:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="text is required for this action type",
-            )
-
-        if action.action_type == "cover_setup":
-            return action
-
-        return action
-
-    def record_user_action(
-        self,
-        user_id: int,
-        history_id: str,
-        state: StoryState,
-        action: UserAction,
-    ) -> StoryState:
-        if action.component_id:
-            for scene in reversed(state.history):
-                component = scene.interaction_component
-                if component is None or component.id != action.component_id:
-                    continue
-
-                updated_component = component.model_copy(
-                    update={
-                        "response_text": action.text,
-                        "response_image": action.image,
-                    }
-                )
-                scene.interaction_component = updated_component
-                break
-
-        if action.action_type == "cover_setup" and action.image is not None:
-            scene = state.current_scene or Scene()
-            scene.images = (
-                [*scene.images, action.image]
-                if isinstance(scene.images, list)
-                else [scene.images, action.image]
-                if scene.images
-                else [action.image]
-            )
-            state.current_scene = scene
-
-        return self.save_story_state(user_id, history_id, state)
-
-    def apply_scene_output(
-        self,
-        user_id: int,
-        history_id: str,
-        state: StoryState,
-        scene: Scene,
-    ) -> StoryState:
-        state.history = [*state.history, scene]
-        state.current_scene = scene
-        return self.save_story_state(user_id, history_id, state)
-
-    def patch_image_description(
-        self,
-        user_id: int,
-        history_id: str,
-        state: StoryState,
-        image: Image,
-    ) -> StoryState:
-        if image.image_id is None or state.current_scene is None:
-            return state
-
-        scene = state.current_scene.model_copy(deep=True)
-        images = scene.images
-
-        if isinstance(images, list):
-            scene.images = [
-                image if item.image_id == image.image_id else item
-                for item in images
-            ]
-        elif images is not None and images.image_id == image.image_id:
-            scene.images = image
-
-        state.current_scene = scene
-        return self.save_story_state(user_id, history_id, state)
 
     def get_image_for_history(
         self,
@@ -407,22 +221,3 @@ class AgentRepository:
         extension: str,
     ) -> str:
         return f"users/{user_id}/histories/{history_id}/{image_id}.{extension}"
-
-    @staticmethod
-    def _extension_from_content_type(
-        content_type: str | None,
-        photo_bytes: bytes,
-    ) -> str:
-        if content_type:
-            extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip())
-            if extension:
-                return extension.lstrip(".")
-
-        if photo_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-            return "png"
-        if photo_bytes.startswith(b"\xff\xd8\xff"):
-            return "jpg"
-        if photo_bytes[:4] == b"RIFF" and photo_bytes[8:12] == b"WEBP":
-            return "webp"
-
-        return "png"

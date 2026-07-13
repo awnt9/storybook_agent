@@ -1,134 +1,14 @@
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator
-from dataclasses import replace
-
 from sqlmodel import Session
 
-from app.core.openai_client import create_llm_client
 from app.repositories.agent_repository import AgentRepository
-from app.schemas.story_elements import Image, UserAction
-from app.story_pipeline.adapters import RepositoryImageStore, RepositoryStoryStateStore
-from app.story_pipeline.deps import StoryRunDeps
-from app.story_pipeline.events import (
-    PipelineDone,
-    PipelineEnd,
-    PipelineGraphComplete,
-    PipelineStep,
-)
-from app.story_pipeline.runner import run_scene_graph
-from app.story_pipeline.serialization import scene_from_output, serialize_pipeline_value
+from app.schemas.story_elements import Image
 
 
 class AgentService:
     def __init__(self, db: Session):
         self.repository = AgentRepository(db)
-
-    def prepare_continue_history(
-        self,
-        *,
-        user_id: int,
-        api_key: str,
-        action_payload: UserAction,
-        history_id: str | None,
-        title: str | None,
-        image_bytes: bytes | None,
-        image_content_type: str | None,
-    ) -> StoryRunDeps:
-        history_id, story_state = self.repository.get_or_create_history(
-            user_id,
-            history_id,
-            title=title,
-        )
-        action = self.repository.build_user_action(
-            user_id=user_id,
-            history_id=history_id,
-            action_payload=action_payload,
-            image_bytes=image_bytes,
-            image_content_type=image_content_type,
-        )
-        story_title = title or self.repository.get_history_title(user_id, history_id)
-
-        return StoryRunDeps(
-            user_id=user_id,
-            history_id=history_id,
-            action=action,
-            story_state=story_state,
-            story_title=story_title,
-            openai_client=create_llm_client(api_key),
-            image_store=RepositoryImageStore(
-                self.repository,
-                user_id=user_id,
-                history_id=history_id,
-            ),
-            state_store=RepositoryStoryStateStore(
-                self.repository,
-                user_id=user_id,
-                history_id=history_id,
-            ),
-            uploaded_image_bytes=image_bytes,
-            uploaded_image_content_type=image_content_type,
-        )
-
-    async def stream_continue_history(
-        self,
-        deps: StoryRunDeps,
-    ) -> AsyncIterator[str]:
-        yield self._format_sse(
-            "start",
-            {
-                "status": "running",
-                "history_id": deps.history_id,
-                "story_state": serialize_pipeline_value(deps.story_state),
-            },
-        )
-
-        try:
-            story_state = self.repository.record_user_action(
-                deps.user_id,
-                deps.history_id,
-                deps.story_state,
-                deps.action,
-            )
-            graph_deps = replace(deps, story_state=story_state)
-
-            async for event in run_scene_graph(graph_deps):
-                if isinstance(event, PipelineStep):
-                    yield self._format_sse(
-                        "step",
-                        {
-                            "node_id": event.node_id,
-                            "inputs": event.inputs,
-                        },
-                    )
-                elif isinstance(event, PipelineEnd):
-                    yield self._format_sse("end", {"output": event.output})
-                elif isinstance(event, PipelineGraphComplete):
-                    scene = scene_from_output(event.output)
-                    if scene is not None:
-                        story_state = self.repository.apply_scene_output(
-                            deps.user_id,
-                            deps.history_id,
-                            graph_deps.story_state,
-                            scene,
-                        )
-
-                    done = PipelineDone(
-                        history_id=deps.history_id,
-                        output=serialize_pipeline_value(event.output),
-                        story_state=serialize_pipeline_value(story_state),
-                    )
-                    yield self._format_sse(
-                        "done",
-                        {
-                            "history_id": done.history_id,
-                            "output": done.output,
-                            "story_state": done.story_state,
-                        },
-                    )
-        except Exception as exc:
-            yield self._format_sse("error", {"detail": str(exc)})
 
     def get_story_image(
         self,
@@ -137,7 +17,3 @@ class AgentService:
         image_id: str,
     ) -> tuple[Image, bytes]:
         return self.repository.get_image_for_history(user_id, history_id, image_id)
-
-    @staticmethod
-    def _format_sse(event: str, data: object) -> str:
-        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
