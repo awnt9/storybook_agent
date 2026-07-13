@@ -18,6 +18,15 @@ const DEFAULT_STORY_TITLE = "Título del cuento";
 
 export { DEFAULT_STORY_TITLE };
 
+function hasCustomCoverTitle(title) {
+  const trimmed = title.trim();
+  return trimmed !== "" && trimmed !== DEFAULT_STORY_TITLE;
+}
+
+function isCoverSetupComplete(coverPhotoFile, coverTitle) {
+  return Boolean(coverPhotoFile) && hasCustomCoverTitle(coverTitle);
+}
+
 function CoverPhotoInput({ photoFile, onPhotoChange }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -431,6 +440,19 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
     return maxIndex;
   }, [pages]);
 
+  const isBeforeFirstScene = useMemo(
+    () => !pages.some((page) => page?.sceneIndex != null),
+    [pages],
+  );
+
+  const hasCoverSetupReady = useMemo(
+    () => isCoverSetupComplete(coverPhotoFile, coverTitle),
+    [coverPhotoFile, coverTitle],
+  );
+
+  const isContinueBlocked =
+    isBeforeFirstScene && !hasCoverSetupReady;
+
   const handleComponentChange = useCallback((componentId, value) => {
     setComponentResponses((current) => ({
       ...current,
@@ -455,6 +477,11 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
       let userAction;
 
       if (isFirstContinue) {
+        if (!hasCoverSetupReady) {
+          toast.error("Añade una foto de portada y un título antes de continuar");
+          return;
+        }
+
         if (trimmedTitle && trimmedTitle !== DEFAULT_STORY_TITLE) {
           titleForRequest = trimmedTitle;
         }
@@ -538,6 +565,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
     coverPhotoFile,
     coverTitle,
     draftId,
+    hasCoverSetupReady,
     isContinuing,
     isDraftReady,
     reportDraftActivity,
@@ -711,10 +739,15 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
               isLoadingApiKey ||
               !selectedApiKey ||
               !draftId ||
-              !isDraftReady
+              !isDraftReady ||
+              isContinueBlocked
             }
             onClick={continueStory}
-            title="Continuar historia"
+            title={
+              isContinueBlocked
+                ? "Añade una foto de portada y un título para empezar"
+                : "Continuar historia"
+            }
             type="button"
           >
             {isContinuing ? "Generando..." : "Continuar historia"}
