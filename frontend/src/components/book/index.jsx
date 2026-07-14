@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, ImagePlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { apiRequest } from "../../lib/api";
-import { loadDraft } from "../../lib/draft";
+import { loadDraft, updateDraftInteraction, updateDraftSetup } from "../../lib/draft";
 import backCoverImage from "../../assets/book/back_cover.png";
 import coverImage from "../../assets/book/cover.png";
 import leftPageImage from "../../assets/book/left_page.png";
@@ -23,28 +23,69 @@ function hasCustomCoverTitle(title) {
   return trimmed !== "" && trimmed !== DEFAULT_STORY_TITLE;
 }
 
-function isCoverSetupComplete(coverPhotoFile, coverTitle) {
-  return Boolean(coverPhotoFile) && hasCustomCoverTitle(coverTitle);
+function isCoverSetupComplete(coverPhotoFile, coverPhotoUrl, coverTitle, hasPersistedCover = false) {
+  return (
+    (Boolean(coverPhotoFile) || Boolean(coverPhotoUrl) || hasPersistedCover) &&
+    hasCustomCoverTitle(coverTitle)
+  );
 }
 
-function CoverPhotoInput({ photoFile, onPhotoChange }) {
+function extractCoverImageUrl(storyState) {
+  const scene = storyState?.current_scene;
+  if (!scene?.images) return null;
+
+  const images = Array.isArray(scene.images) ? scene.images : [scene.images];
+  return images.filter(Boolean)[0]?.url ?? null;
+}
+
+function CoverPhotoInput({ photoFile, photoUrl, onPhotoChange }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
 
   useEffect(() => {
-    if (!photoFile) {
+    let isMounted = true;
+    let localPreviewUrl = null;
+
+    if (photoFile) {
+      localPreviewUrl = URL.createObjectURL(photoFile);
+      setPreviewUrl(localPreviewUrl);
+      return () => {
+        URL.revokeObjectURL(localPreviewUrl);
+      };
+    }
+
+    if (!photoUrl) {
       setPreviewUrl(null);
       return undefined;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(photoFile);
-    setPreviewUrl(nextPreviewUrl);
+    if (photoUrl.startsWith("blob:")) {
+      setPreviewUrl(photoUrl);
+      return undefined;
+    }
+
+    resolveAuthenticatedImageUrl(photoUrl)
+      .then((nextPreviewUrl) => {
+        if (!isMounted) {
+          URL.revokeObjectURL(nextPreviewUrl);
+          return;
+        }
+        localPreviewUrl = nextPreviewUrl;
+        setPreviewUrl(nextPreviewUrl);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (isMounted) setPreviewUrl(null);
+      });
 
     return () => {
-      URL.revokeObjectURL(nextPreviewUrl);
+      isMounted = false;
+      if (localPreviewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(localPreviewUrl);
+      }
     };
-  }, [photoFile]);
+  }, [photoFile, photoUrl]);
 
   const loadPhoto = (photo) => {
     if (!photo?.type.startsWith("image/")) return;
@@ -118,6 +159,7 @@ function BookCover() {
 
 function BookCoverEditor({
   coverPhotoFile,
+  coverPhotoUrl,
   coverTitle,
   isVisible,
   isPreviewing,
@@ -135,7 +177,11 @@ function BookCoverEditor({
         .filter(Boolean)
         .join(" ")}
     >
-      <CoverPhotoInput onPhotoChange={onCoverPhotoChange} photoFile={coverPhotoFile} />
+      <CoverPhotoInput
+        onPhotoChange={onCoverPhotoChange}
+        photoFile={coverPhotoFile}
+        photoUrl={coverPhotoUrl}
+      />
       <textarea
         aria-label="Título del cuento"
         className="cover-text-input cover-story-title-input"
@@ -213,20 +259,46 @@ function revokeBlobUrls(urls) {
   }
 }
 
-async function resolveAuthenticatedImageUrl(path) {
-  const accessToken = localStorage.getItem("access_token");
-  const response = await fetch(path, {
-    credentials: "include",
-    headers: {
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-  });
+function seedComponentResponses(storyState) {
+  const responses = {};
+  const history = storyState?.history ?? [];
 
-  if (!response.ok) {
-    throw new Error("No se pudo cargar la ilustración");
+  for (const scene of history) {
+    const component = scene.interaction_component;
+    if (!component) continue;
+
+    if (component.response_text) {
+      responses[component.id] = component.response_text;
+    } else if (component.response_image?.url) {
+      responses[component.id] = component.response_image.url;
+    }
   }
 
-  return URL.createObjectURL(await response.blob());
+  return responses;
+}
+
+async function resolveAuthenticatedImageUrl(path, timeoutMs = 15000) {
+  const accessToken = localStorage.getItem("access_token");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(path, {
+      credentials: "include",
+      headers: {
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error("No se pudo cargar la ilustración");
+    }
+
+    return URL.createObjectURL(await response.blob());
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function storyStateToPages(storyState) {
@@ -265,22 +337,6 @@ async function storyStateToPages(storyState) {
   }
 
   return pages;
-}
-
-function seedComponentResponses(storyState) {
-  const responses = {};
-  const history = storyState?.history ?? [];
-
-  for (const scene of history) {
-    const component = scene.interaction_component;
-    if (!component) continue;
-
-    if (component.response_text) {
-      responses[component.id] = component.response_text;
-    }
-  }
-
-  return responses;
 }
 
 function parseSseChunk(chunk, onEvent) {
@@ -370,6 +426,7 @@ async function streamContinueDraft({ draftId, userAction, title, imageFile, onEv
 export function StoryBookPreview({ draftId, onDraftActivityChange }) {
   const [pages, setPages] = useState(() => [...defaultPages]);
   const [coverPhotoFile, setCoverPhotoFile] = useState(null);
+  const [coverPhotoUrl, setCoverPhotoUrl] = useState(null);
   const [coverTitle, setCoverTitle] = useState(DEFAULT_STORY_TITLE);
   const [selectedApiKey, setSelectedApiKey] = useState(null);
   const [isLoadingApiKey, setIsLoadingApiKey] = useState(true);
@@ -378,11 +435,17 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
   const [currentLeaf, setCurrentLeaf] = useState(0);
   const [previewDirection, setPreviewDirection] = useState(null);
   const [isContinuing, setIsContinuing] = useState(false);
+  const [isGeneratingOnServer, setIsGeneratingOnServer] = useState(false);
+  const [hasPersistedCover, setHasPersistedCover] = useState(false);
+  const [serverSceneCount, setServerSceneCount] = useState(0);
   const [componentResponses, setComponentResponses] = useState({});
   const continueAbortRef = useRef(null);
   const storyStateRef = useRef(null);
   const blobUrlsRef = useRef([]);
   const hasContinuedRef = useRef(false);
+  const skipTitlePersistRef = useRef(true);
+  const interactionPersistTimersRef = useRef({});
+  const coverUploadRequestRef = useRef(0);
 
   const reportDraftActivity = useCallback(
     (overrides = {}) => {
@@ -394,6 +457,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
       const nextTitle = overrides.coverTitle ?? coverTitle;
       const hasLocalEdits =
         Boolean(overrides.coverPhotoFile ?? coverPhotoFile) ||
+        Boolean(overrides.coverPhotoUrl ?? coverPhotoUrl) ||
         (nextTitle.trim() !== "" && nextTitle.trim() !== DEFAULT_STORY_TITLE);
 
       onDraftActivityChange({
@@ -403,8 +467,71 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
         coverTitle: nextTitle,
       });
     },
-    [coverPhotoFile, coverTitle, onDraftActivityChange],
+    [coverPhotoFile, coverPhotoUrl, coverTitle, onDraftActivityChange],
   );
+
+  const applyCoverFromStoryState = useCallback(async (storyState) => {
+    const rawCoverUrl = extractCoverImageUrl(storyState);
+    if (!rawCoverUrl) {
+      setCoverPhotoUrl(null);
+      return;
+    }
+
+    try {
+      const blobUrl = await resolveAuthenticatedImageUrl(rawCoverUrl);
+      blobUrlsRef.current.push(blobUrl);
+      setCoverPhotoUrl(blobUrl);
+      setCoverPhotoFile(null);
+    } catch (error) {
+      console.error(error);
+      setCoverPhotoUrl(null);
+    }
+  }, []);
+
+  const applyDraftPayload = useCallback(
+    async (payload) => {
+      const storyState = payload.story_state;
+      const historyLength = storyState.history?.length ?? 0;
+
+      storyStateRef.current = storyState;
+      setServerSceneCount(historyLength);
+      setHasPersistedCover(Boolean(extractCoverImageUrl(storyState)));
+
+      if (payload.title) {
+        setCoverTitle(payload.title);
+      }
+
+      const generating = Boolean(payload.is_generating);
+      setIsGeneratingOnServer(generating);
+      setIsContinuing(generating);
+
+      if (historyLength > 0) {
+        hasContinuedRef.current = true;
+      }
+
+      reportDraftActivity({
+        storyState,
+        coverTitle: payload.title ?? undefined,
+      });
+
+      await applyCoverFromStoryState(storyState);
+
+      if (historyLength > 0) {
+        const nextPages = await storyStateToPages(storyState);
+        revokeBlobUrls(blobUrlsRef.current);
+        blobUrlsRef.current = collectBlobUrls(nextPages);
+        setPages(nextPages);
+        setComponentResponses(seedComponentResponses(storyState));
+        setCurrentLeaf(Math.ceil(historyLength / 2));
+      } else {
+        setComponentResponses(seedComponentResponses(storyState));
+      }
+    },
+    [applyCoverFromStoryState, reportDraftActivity],
+  );
+
+  const applyDraftPayloadRef = useRef(applyDraftPayload);
+  applyDraftPayloadRef.current = applyDraftPayload;
 
   const zIndexes = useMemo(
     () => pages.map((_, index) => (index % 2 === 0 ? pages.length - index : undefined)),
@@ -441,27 +568,69 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
   }, [pages]);
 
   const isBeforeFirstScene = useMemo(
-    () => !pages.some((page) => page?.sceneIndex != null),
-    [pages],
+    () =>
+      serverSceneCount === 0 &&
+      !pages.some((page) => page?.sceneIndex != null),
+    [pages, serverSceneCount],
   );
 
   const hasCoverSetupReady = useMemo(
-    () => isCoverSetupComplete(coverPhotoFile, coverTitle),
-    [coverPhotoFile, coverTitle],
+    () =>
+      isCoverSetupComplete(coverPhotoFile, coverPhotoUrl, coverTitle, hasPersistedCover),
+    [coverPhotoFile, coverPhotoUrl, coverTitle, hasPersistedCover],
   );
 
   const isContinueBlocked =
     isBeforeFirstScene && !hasCoverSetupReady;
 
-  const handleComponentChange = useCallback((componentId, value) => {
-    setComponentResponses((current) => ({
-      ...current,
-      [componentId]: value,
-    }));
-  }, []);
+  const persistInteractionResponse = useCallback(
+    async (componentId, value, component) => {
+      if (!draftId || !component) return;
+
+      try {
+        let payload;
+        if (component.type === "image_input" && value instanceof File) {
+          payload = await updateDraftInteraction(draftId, componentId, {
+            imageFile: value,
+          });
+        } else if (typeof value === "string") {
+          payload = await updateDraftInteraction(draftId, componentId, {
+            text: value,
+          });
+        } else {
+          return;
+        }
+
+        if (payload?.story_state) {
+          storyStateRef.current = payload.story_state;
+          setComponentResponses(seedComponentResponses(payload.story_state));
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error("No se pudo guardar tu respuesta");
+      }
+    },
+    [draftId],
+  );
+
+  const handleComponentChange = useCallback(
+    (componentId, value, component) => {
+      setComponentResponses((current) => ({
+        ...current,
+        [componentId]: value,
+      }));
+
+      clearTimeout(interactionPersistTimersRef.current[componentId]);
+      const delay = component?.type === "image_input" ? 0 : 400;
+      interactionPersistTimersRef.current[componentId] = setTimeout(() => {
+        persistInteractionResponse(componentId, value, component);
+      }, delay);
+    },
+    [persistInteractionResponse],
+  );
 
   const continueStory = useCallback(async () => {
-    if (isContinuing || !selectedApiKey || !draftId || !isDraftReady) return;
+    if (isContinuing || isGeneratingOnServer || !selectedApiKey || !draftId || !isDraftReady) return;
 
     continueAbortRef.current?.abort();
     const controller = new AbortController();
@@ -506,7 +675,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
           }
 
           userAction = buildUserActionFromResponse(component, responseValue);
-          if (component.type === "image_input") {
+          if (component.type === "image_input" && responseValue instanceof File) {
             imageFile = responseValue;
           }
         } else {
@@ -524,6 +693,8 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
           if (eventName === "done" && data.story_state) {
             hasContinuedRef.current = true;
             storyStateRef.current = data.story_state;
+            setIsGeneratingOnServer(false);
+            setServerSceneCount(data.story_state.history?.length ?? 0);
             reportDraftActivity({ storyState: data.story_state });
             storyStateToPages(data.story_state)
               .then((nextPages) => {
@@ -552,6 +723,9 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
       }
     } catch (error) {
       if (error.name !== "AbortError") {
+        if (error.message?.includes("generación en curso")) {
+          setIsGeneratingOnServer(true);
+        }
         toast.error(error.message);
       }
     } finally {
@@ -567,6 +741,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
     draftId,
     hasCoverSetupReady,
     isContinuing,
+    isGeneratingOnServer,
     isDraftReady,
     reportDraftActivity,
     selectedApiKey,
@@ -595,65 +770,122 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
     if (!draftId) {
       setIsDraftReady(false);
       return undefined;
     }
 
     setIsDraftReady(false);
+    skipTitlePersistRef.current = true;
+
+    let cancelled = false;
 
     loadDraft(apiRequest, draftId)
-      .then(async (payload) => {
-        if (!isMounted) return;
-
-        const storyState = payload.story_state;
-        storyStateRef.current = storyState;
-
-        if (payload.title) {
-          setCoverTitle(payload.title);
-        }
-
-        if ((storyState.history?.length ?? 0) > 0) {
-          hasContinuedRef.current = true;
-          const nextPages = await storyStateToPages(storyState);
-          revokeBlobUrls(blobUrlsRef.current);
-          blobUrlsRef.current = collectBlobUrls(nextPages);
-          setPages(nextPages);
-          setComponentResponses(seedComponentResponses(storyState));
-          const sceneCount = storyState.history.length;
-          setCurrentLeaf(Math.ceil(sceneCount / 2));
-        }
-
+      .then((payload) => {
+        if (cancelled) return;
         setIsDraftReady(true);
-        reportDraftActivity({
-          storyState,
-          coverTitle: payload.title ?? coverTitle,
+        applyDraftPayloadRef.current(payload).catch((error) => {
+          console.error(error);
+          toast.error("No se pudieron cargar todas las ilustraciones del borrador");
         });
       })
       .catch((error) => {
-        if (!isMounted) return;
+        if (cancelled) return;
         console.error(error);
         toast.error("No se pudo cargar el borrador");
         setIsDraftReady(true);
       });
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
   }, [draftId]);
 
   useEffect(() => {
+    if (!draftId || !isDraftReady || !isGeneratingOnServer) return undefined;
+
+    const pollDraft = () => {
+      loadDraft(apiRequest, draftId)
+        .then((payload) => {
+          if (!payload.is_generating) {
+            applyDraftPayloadRef.current(payload).catch((error) => {
+              console.error(error);
+            });
+          }
+        })
+        .catch((error) => {
+          console.error(error);
+        });
+    };
+
+    pollDraft();
+    const interval = setInterval(pollDraft, 2000);
+
+    return () => clearInterval(interval);
+  }, [draftId, isDraftReady, isGeneratingOnServer]);
+
+  useEffect(() => {
+    if (!draftId || !isDraftReady) return undefined;
+
+    if (skipTitlePersistRef.current) {
+      skipTitlePersistRef.current = false;
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      updateDraftSetup(draftId, { title: coverTitle.trim() })
+        .then((payload) => {
+          if (payload?.story_state) {
+            storyStateRef.current = payload.story_state;
+          }
+        })
+        .catch((error) => {
+          console.error(error);
+        });
+    }, 400);
+
+    return () => clearTimeout(timeout);
+  }, [coverTitle, draftId, isDraftReady]);
+
+  useEffect(() => {
     reportDraftActivity();
-  }, [coverPhotoFile, coverTitle, reportDraftActivity]);
+  }, [coverPhotoFile, coverPhotoUrl, coverTitle, reportDraftActivity]);
 
   useEffect(() => {
     return () => {
       continueAbortRef.current?.abort();
       revokeBlobUrls(blobUrlsRef.current);
+      for (const timer of Object.values(interactionPersistTimersRef.current)) {
+        clearTimeout(timer);
+      }
     };
   }, []);
+
+  const handleCoverPhotoChange = useCallback(
+    async (photo) => {
+      if (!draftId || !photo) return;
+
+      setCoverPhotoFile(photo);
+      reportDraftActivity({ coverPhotoFile: photo });
+
+      const requestId = coverUploadRequestRef.current + 1;
+      coverUploadRequestRef.current = requestId;
+
+      try {
+        const payload = await updateDraftSetup(draftId, { imageFile: photo });
+        if (coverUploadRequestRef.current !== requestId) return;
+
+        storyStateRef.current = payload.story_state;
+        setHasPersistedCover(Boolean(extractCoverImageUrl(payload.story_state)));
+        await applyCoverFromStoryState(payload.story_state);
+        reportDraftActivity({ storyState: payload.story_state });
+      } catch (error) {
+        console.error(error);
+        toast.error(error.message || "No se pudo guardar la portada");
+      }
+    },
+    [applyCoverFromStoryState, draftId, reportDraftActivity],
+  );
 
   return (
     <section className="story-book-stage">
@@ -679,10 +911,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
                 <BookPage
                   backgroundUrl={content?.backgroundUrl}
                   interactionComponent={content?.interactionComponent}
-                  interactionDisabled={
-                    content?.sceneIndex !== latestSceneIndex ||
-                    Boolean(content?.interactionComponent?.response_text)
-                  }
+                  interactionDisabled={content?.sceneIndex !== latestSceneIndex}
                   interactionValue={
                     content?.interactionComponent
                       ? componentResponses[content.interactionComponent.id]
@@ -691,7 +920,11 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
                   narrativeText={content?.text}
                   onInteractionChange={(value) => {
                     if (!content?.interactionComponent) return;
-                    handleComponentChange(content.interactionComponent.id, value);
+                    handleComponentChange(
+                      content.interactionComponent.id,
+                      value,
+                      content.interactionComponent,
+                    );
                   }}
                   side={index % 2 === 0 ? "right" : "left"}
                 />
@@ -700,13 +933,11 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
           ))}
           <BookCoverEditor
             coverPhotoFile={coverPhotoFile}
+            coverPhotoUrl={coverPhotoUrl}
             coverTitle={coverTitle}
             isPreviewing={currentLeaf === 0 && previewDirection === "next"}
             isVisible={currentLeaf === 0}
-            onCoverPhotoChange={(photo) => {
-              setCoverPhotoFile(photo);
-              reportDraftActivity({ coverPhotoFile: photo });
-            }}
+            onCoverPhotoChange={handleCoverPhotoChange}
             onCoverTitleChange={(title) => {
               setCoverTitle(title);
               reportDraftActivity({ coverTitle: title });
@@ -736,6 +967,7 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
             className="book-control book-control-continue"
             disabled={
               isContinuing ||
+              isGeneratingOnServer ||
               isLoadingApiKey ||
               !selectedApiKey ||
               !draftId ||
@@ -744,13 +976,15 @@ export function StoryBookPreview({ draftId, onDraftActivityChange }) {
             }
             onClick={continueStory}
             title={
-              isContinueBlocked
-                ? "Añade una foto de portada y un título para empezar"
-                : "Continuar historia"
+              isContinuing || isGeneratingOnServer
+                ? "Generando la siguiente escena..."
+                : isContinueBlocked
+                  ? "Añade una foto de portada y un título para empezar"
+                  : "Continuar historia"
             }
             type="button"
           >
-            {isContinuing ? "Generando..." : "Continuar historia"}
+            {isContinuing || isGeneratingOnServer ? "Generando..." : "Continuar historia"}
           </button>
           <button
             aria-label="Pagina siguiente"

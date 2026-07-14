@@ -72,17 +72,57 @@ export function ImageInputField({ component, value, onChange, disabled }) {
   const [previewUrl, setPreviewUrl] = useState(null);
 
   useEffect(() => {
+    let isMounted = true;
+    let localPreviewUrl = null;
+
     if (!value) {
       setPreviewUrl(null);
       return undefined;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(value);
-    setPreviewUrl(nextPreviewUrl);
+    if (typeof value === "string") {
+      if (value.startsWith("blob:")) {
+        setPreviewUrl(value);
+        return undefined;
+      }
 
-    return () => {
-      URL.revokeObjectURL(nextPreviewUrl);
-    };
+      const accessToken = localStorage.getItem("access_token");
+      fetch(value, {
+        credentials: "include",
+        headers: {
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("No se pudo cargar la imagen");
+          const blob = await response.blob();
+          if (!isMounted) return;
+          localPreviewUrl = URL.createObjectURL(blob);
+          setPreviewUrl(localPreviewUrl);
+        })
+        .catch((error) => {
+          console.error(error);
+          if (isMounted) setPreviewUrl(null);
+        });
+
+      return () => {
+        isMounted = false;
+        if (localPreviewUrl?.startsWith("blob:")) {
+          URL.revokeObjectURL(localPreviewUrl);
+        }
+      };
+    }
+
+    if (value instanceof File) {
+      localPreviewUrl = URL.createObjectURL(value);
+      setPreviewUrl(localPreviewUrl);
+      return () => {
+        URL.revokeObjectURL(localPreviewUrl);
+      };
+    }
+
+    setPreviewUrl(null);
+    return undefined;
   }, [value]);
 
   const loadPhoto = (photo) => {
@@ -152,7 +192,7 @@ export function isInteractionComplete(component, value) {
     case "single_choice":
       return typeof value === "string" && value.length > 0;
     case "image_input":
-      return value instanceof File;
+      return value instanceof File || (typeof value === "string" && value.length > 0);
     default:
       return false;
   }
