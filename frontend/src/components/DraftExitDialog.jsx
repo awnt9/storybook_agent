@@ -8,10 +8,10 @@ export default function DraftExitDialog({
   onDiscard,
   onSave,
 }) {
-  const cancelButtonRef = useRef(null);
+  const saveButtonRef = useRef(null);
 
   useEffect(() => {
-    if (isOpen) cancelButtonRef.current?.focus();
+    if (isOpen) saveButtonRef.current?.focus();
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -52,6 +52,7 @@ export default function DraftExitDialog({
 
         <div className="mt-6 flex flex-col gap-3">
           <button
+            ref={saveButtonRef}
             type="button"
             onClick={onSave}
             disabled={isPending}
@@ -65,30 +66,19 @@ export default function DraftExitDialog({
             {isPending ? "Guardando..." : "Guardar y salir"}
           </button>
 
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              ref={cancelButtonRef}
-              type="button"
-              onClick={onCancel}
-              disabled={isPending}
-              className="rounded-2xl border-3 border-slate-900 bg-white px-4 py-3 font-black shadow-[3px_3px_0_#111827] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Seguir editando
-            </button>
-            <button
-              type="button"
-              onClick={onDiscard}
-              disabled={isPending}
-              className="flex items-center justify-center gap-2 rounded-2xl border-3 border-slate-900 bg-orange-300 px-4 py-3 font-black shadow-[3px_3px_0_#111827] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isPending ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Trash2 className="h-5 w-5" />
-              )}
-              {isPending ? "Saliendo..." : "Descartar"}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onDiscard}
+            disabled={isPending}
+            className="flex items-center justify-center gap-2 rounded-2xl border-3 border-slate-900 bg-orange-300 px-4 py-3 font-black shadow-[3px_3px_0_#111827] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isPending ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Trash2 className="h-5 w-5" />
+            )}
+            {isPending ? "Saliendo..." : "Descartar"}
+          </button>
         </div>
       </div>
     </div>
