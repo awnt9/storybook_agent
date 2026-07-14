@@ -47,11 +47,69 @@ def get_draft(
     current_user: User = Depends(get_current_user),
     draft_service: DraftService = Depends(get_draft_service),
 ):
-    story_state, title = draft_service.get_draft(current_user.id, draft_id)
     return DraftResponse(
-        draft_id=draft_id,
-        story_state=story_state,
-        title=title,
+        **draft_service.build_draft_response(current_user.id, draft_id),
+    )
+
+
+@router.patch("/{draft_id}", response_model=DraftResponse)
+async def update_draft(
+    draft_id: str,
+    current_user: User = Depends(get_current_user),
+    draft_service: DraftService = Depends(get_draft_service),
+    title: str | None = Form(default=None),
+    image: UploadFile | None = File(default=None),
+):
+    image_bytes = await image.read() if image is not None else None
+    image_bytes = image_bytes or None
+    clean_title = title.strip() if title else None
+
+    story_state, draft_title = draft_service.update_draft_setup(
+        current_user.id,
+        draft_id,
+        title=clean_title,
+        image_bytes=image_bytes,
+        image_content_type=image.content_type if image is not None else None,
+    )
+
+    return DraftResponse(
+        **draft_service.build_draft_response(
+            current_user.id,
+            draft_id,
+            story_state=story_state,
+            title=draft_title,
+        ),
+    )
+
+
+@router.patch("/{draft_id}/interactions/{component_id}", response_model=DraftResponse)
+async def update_draft_interaction(
+    draft_id: str,
+    component_id: str,
+    current_user: User = Depends(get_current_user),
+    draft_service: DraftService = Depends(get_draft_service),
+    text: str | None = Form(default=None),
+    image: UploadFile | None = File(default=None),
+):
+    image_bytes = await image.read() if image is not None else None
+    image_bytes = image_bytes or None
+    clean_text = text.strip() if text else None
+
+    story_state = draft_service.update_interaction_response(
+        current_user.id,
+        draft_id,
+        component_id=component_id,
+        text=clean_text,
+        image_bytes=image_bytes,
+        image_content_type=image.content_type if image is not None else None,
+    )
+
+    return DraftResponse(
+        **draft_service.build_draft_response(
+            current_user.id,
+            draft_id,
+            story_state=story_state,
+        ),
     )
 
 

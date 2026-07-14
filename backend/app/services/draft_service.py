@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import mimetypes
 from collections.abc import AsyncIterator
 from dataclasses import replace
 
@@ -34,6 +36,44 @@ class DraftService:
     def get_draft(self, user_id: int, draft_id: str):
         return self.repository.get_draft(user_id, draft_id)
 
+    def update_draft_setup(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        title: str | None = None,
+        image_bytes: bytes | None = None,
+        image_content_type: str | None = None,
+    ):
+        story_state = self.repository.update_draft_setup(
+            user_id,
+            draft_id,
+            title=title,
+            image_bytes=image_bytes,
+            image_content_type=image_content_type,
+        )
+        _, draft_title = self.repository.get_draft(user_id, draft_id)
+        return story_state, draft_title
+
+    def update_interaction_response(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        component_id: str,
+        text: str | None = None,
+        image_bytes: bytes | None = None,
+        image_content_type: str | None = None,
+    ):
+        return self.repository.update_interaction_response(
+            user_id,
+            draft_id,
+            component_id=component_id,
+            text=text,
+            image_bytes=image_bytes,
+            image_content_type=image_content_type,
+        )
+
     def prepare_continue_draft(
         self,
         *,
@@ -55,6 +95,22 @@ class DraftService:
         )
         story_title = title or self.repository.get_draft_title(user_id, draft_id)
 
+        resolved_image_bytes = image_bytes
+        resolved_image_content_type = image_content_type
+        if (
+            resolved_image_bytes is None
+            and action.action_type == "cover_setup"
+        ):
+            cover_image = self.repository.get_cover_image(story_state)
+            if cover_image is not None and cover_image.path:
+                resolved_image_bytes = self.repository.read_image_bytes(cover_image)
+                resolved_image_content_type = (
+                    mimetypes.guess_type(cover_image.path)[0]
+                    or "image/jpeg"
+                )
+                if action.image is None:
+                    action = action.model_copy(update={"image": cover_image})
+
         return StoryRunDeps(
             user_id=user_id,
             history_id=draft_id,
@@ -72,32 +128,43 @@ class DraftService:
                 user_id=user_id,
                 draft_id=draft_id,
             ),
-            uploaded_image_bytes=image_bytes,
-            uploaded_image_content_type=image_content_type,
+            uploaded_image_bytes=resolved_image_bytes,
+            uploaded_image_content_type=resolved_image_content_type,
         )
 
-    async def stream_continue_draft(
+    def get_draft(self, user_id: int, draft_id: str):
+        return self.repository.get_draft(user_id, draft_id)
+
+    def is_generating(self, user_id: int, draft_id: str) -> bool:
+        return self.repository.is_generation_in_progress(user_id, draft_id)
+
+    def build_draft_response(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        story_state=None,
+        title: str | None = None,
+    ) -> dict:
+        if story_state is None or title is None:
+            loaded_state, loaded_title = self.repository.get_draft(user_id, draft_id)
+            story_state = loaded_state if story_state is None else story_state
+            title = loaded_title if title is None else title
+
+        return {
+            "draft_id": draft_id,
+            "story_state": story_state,
+            "title": title,
+            "is_generating": self.is_generating(user_id, draft_id),
+        }
+
+    async def _run_continue_pipeline(
         self,
         deps: StoryRunDeps,
         *,
-        title: str | None = None,
-    ) -> AsyncIterator[str]:
-        if not self.repository.acquire_generation_lock(deps.user_id, deps.history_id):
-            yield self._format_sse(
-                "error",
-                {"detail": "Ya hay una generación en curso para este borrador"},
-            )
-            return
-
-        yield self._format_sse(
-            "start",
-            {
-                "status": "running",
-                "draft_id": deps.history_id,
-                "story_state": serialize_pipeline_value(deps.story_state),
-            },
-        )
-
+        title: str | None,
+        event_queue: asyncio.Queue[str | None],
+    ) -> None:
         story_state = deps.story_state
 
         try:
@@ -116,15 +183,19 @@ class DraftService:
 
             async for event in run_scene_graph(graph_deps):
                 if isinstance(event, PipelineStep):
-                    yield self._format_sse(
-                        "step",
-                        {
-                            "node_id": event.node_id,
-                            "inputs": event.inputs,
-                        },
+                    await event_queue.put(
+                        self._format_sse(
+                            "step",
+                            {
+                                "node_id": event.node_id,
+                                "inputs": event.inputs,
+                            },
+                        )
                     )
                 elif isinstance(event, PipelineEnd):
-                    yield self._format_sse("end", {"output": event.output})
+                    await event_queue.put(
+                        self._format_sse("end", {"output": event.output})
+                    )
                 elif isinstance(event, PipelineGraphComplete):
                     scene = scene_from_output(event.output)
                     if scene is not None:
@@ -140,18 +211,61 @@ class DraftService:
                         output=serialize_pipeline_value(event.output),
                         story_state=serialize_pipeline_value(story_state),
                     )
-                    yield self._format_sse(
-                        "done",
-                        {
-                            "draft_id": deps.history_id,
-                            "output": done.output,
-                            "story_state": done.story_state,
-                        },
+                    await event_queue.put(
+                        self._format_sse(
+                            "done",
+                            {
+                                "draft_id": deps.history_id,
+                                "output": done.output,
+                                "story_state": done.story_state,
+                            },
+                        )
                     )
         except Exception as exc:
-            yield self._format_sse("error", {"detail": str(exc)})
+            await event_queue.put(self._format_sse("error", {"detail": str(exc)}))
         finally:
+            await event_queue.put(None)
             self.repository.release_generation_lock(deps.user_id, deps.history_id)
+
+    async def stream_continue_draft(
+        self,
+        deps: StoryRunDeps,
+        *,
+        title: str | None = None,
+    ) -> AsyncIterator[str]:
+        if not self.repository.acquire_generation_lock(deps.user_id, deps.history_id):
+            yield self._format_sse(
+                "error",
+                {"detail": "Ya hay una generación en curso para este borrador"},
+            )
+            return
+
+        event_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        await event_queue.put(
+            self._format_sse(
+                "start",
+                {
+                    "status": "running",
+                    "draft_id": deps.history_id,
+                    "story_state": serialize_pipeline_value(deps.story_state),
+                },
+            )
+        )
+
+        asyncio.create_task(
+            self._run_continue_pipeline(deps, title=title, event_queue=event_queue)
+        )
+
+        try:
+            while True:
+                message = await event_queue.get()
+                if message is None:
+                    break
+                yield message
+        except asyncio.CancelledError:
+            # Client disconnected; pipeline keeps running in the background task.
+            return
 
     def commit_draft(
         self,

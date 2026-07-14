@@ -17,6 +17,7 @@ class DraftResponse(BaseModel):
     draft_id: str
     story_state: StoryState
     title: str | None = None
+    is_generating: bool = False
 
 
 class DraftCommitRequest(BaseModel):

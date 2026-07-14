@@ -70,6 +70,89 @@ class DraftRepository:
         meta = self._load_meta(user_id, draft_id)
         return meta.get("title")
 
+    def update_draft_setup(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        title: str | None = None,
+        image_bytes: bytes | None = None,
+        image_content_type: str | None = None,
+    ) -> StoryState:
+        self._ensure_owned_draft(user_id, draft_id)
+        state = self.load_story_state(user_id, draft_id)
+
+        if image_bytes:
+            cover_image = self.store_image(
+                user_id,
+                draft_id,
+                image_bytes,
+                content_type=image_content_type,
+                prompt="Reference character photo",
+            )
+            scene = state.current_scene or Scene()
+            scene.images = [cover_image]
+            state.current_scene = scene
+
+        if title is not None:
+            self._update_title(user_id, draft_id, title)
+
+        return self.save_story_state(user_id, draft_id, state)
+
+    def update_interaction_response(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        component_id: str,
+        text: str | None = None,
+        image_bytes: bytes | None = None,
+        image_content_type: str | None = None,
+    ) -> StoryState:
+        self._ensure_owned_draft(user_id, draft_id)
+        state = self.load_story_state(user_id, draft_id)
+
+        response_image = None
+        if image_bytes:
+            response_image = self.store_image(
+                user_id,
+                draft_id,
+                image_bytes,
+                content_type=image_content_type,
+                prompt=text or "User uploaded image",
+            )
+
+        for scene in reversed(state.history):
+            component = scene.interaction_component
+            if component is None or component.id != component_id:
+                continue
+
+            updates: dict[str, object] = {}
+            if text is not None:
+                updates["response_text"] = text
+            if response_image is not None:
+                updates["response_image"] = response_image
+
+            if not updates:
+                return state
+
+            scene.interaction_component = component.model_copy(update=updates)
+            return self.save_story_state(user_id, draft_id, state)
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interaction component not found",
+        )
+
+    def get_cover_image(self, state: StoryState) -> Image | None:
+        if state.current_scene is None:
+            return None
+
+        images = state.current_scene.images
+        if isinstance(images, list):
+            return images[0] if images else None
+        return images
+
     def save_story_state(
         self,
         user_id: int,
@@ -186,10 +269,15 @@ class DraftRepository:
             )
 
         if action.action_type == "image_input" and action.image is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An image is required for image_input actions",
-            )
+            state = self.load_story_state(user_id, draft_id)
+            if not self._component_has_saved_image_response(
+                state,
+                action_payload.component_id,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="An image is required for image_input actions",
+                )
 
         if action.action_type in {"text_input", "single_choice", "yes_no"} and not clean_text:
             raise HTTPException(
@@ -228,13 +316,7 @@ class DraftRepository:
 
         if action.action_type == "cover_setup" and action.image is not None:
             scene = state.current_scene or Scene()
-            scene.images = (
-                [*scene.images, action.image]
-                if isinstance(scene.images, list)
-                else [scene.images, action.image]
-                if scene.images
-                else [action.image]
-            )
+            scene.images = [action.image]
             state.current_scene = scene
 
         if title:
@@ -307,6 +389,10 @@ class DraftRepository:
 
     def release_generation_lock(self, user_id: int, draft_id: str) -> None:
         self.redis.delete(self._lock_key(user_id, draft_id))
+
+    def is_generation_in_progress(self, user_id: int, draft_id: str) -> bool:
+        self._ensure_owned_draft(user_id, draft_id)
+        return bool(self.redis.exists(self._lock_key(user_id, draft_id)))
 
     def delete_draft(self, user_id: int, draft_id: str) -> None:
         self._ensure_owned_draft(user_id, draft_id)
@@ -602,6 +688,22 @@ class DraftRepository:
         stripped = image.model_copy()
         stripped.url = None
         return stripped
+
+    @staticmethod
+    def _component_has_saved_image_response(
+        state: StoryState,
+        component_id: str | None,
+    ) -> bool:
+        if not component_id:
+            return False
+
+        for scene in reversed(state.history):
+            component = scene.interaction_component
+            if component is None or component.id != component_id:
+                continue
+            return component.response_image is not None
+
+        return False
 
     def _find_image(self, state: StoryState, image_id: str) -> Image | None:
         scenes = [*state.history]
